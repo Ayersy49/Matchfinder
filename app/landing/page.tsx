@@ -3,8 +3,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarDays, UserRound, Shield, LogIn, Star, Footprints } from "lucide-react";
 import { useMe } from "@/lib/useMe";
-import Link from "next/link"; // diğer importların yanına
+import Link from "next/link"; 
 import { useRouter } from "next/navigation";
+
+<Link href="/invites" className="rounded-lg bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700">
+  Davetler
+</Link>
 
 // API kökü
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
@@ -12,6 +16,23 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 function getToken() {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
+}
+
+function InvitesBell() {
+  return (
+    <Link
+      href="/invites"
+      className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+      title="Davetler"
+    >
+      Davetler
+      {/* Badge koymak istersen: 
+      <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+        1
+      </span> 
+      */}
+    </Link>
+  );
 }
 
 type MatchLite = {
@@ -385,7 +406,11 @@ function MainShell({
     <div className="relative min-h-dvh pb-24">
       <header className="sticky top-0 z-20 flex items-center justify-between bg-neutral-950/80 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
         <div className="text-lg font-semibold">MatchFinder</div>
+        {/* >>> EKLENDİ: davet zili + mevcut yazı */}
+        <div className="flex items-center gap-2">
+          <InvitesBell />
         <div className="text-xs text-neutral-400">MVP Demo</div>
+        </div>
       </header>
 
       <main className="px-4 py-4">
@@ -636,28 +661,32 @@ function MatchesList() {
 
 // Maç Ekranı
 // ---- Maçlar sekmesi: liste + filtre + hızlı katıl/ayrıl ----
+// ---- Maçlar sekmesi: liste + filtre + hızlı katıl/ayrıl ----
 function MatchesScreen() {
-  // API kökü ve token yardımcıları dosyada zaten var:
-  // const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-  // function getToken() { ... }
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
   // JWT'den kendi id'm
   const meId: string | null = (() => {
     try {
-      const t = getToken();
+      const t =
+        (typeof window !== "undefined" && (localStorage.getItem("token") ||
+        localStorage.getItem("access_token") ||
+        localStorage.getItem("jwt"))) ||
+        null;
       if (!t) return null;
       const p = JSON.parse(atob(t.split(".")[1] || ""));
       return p?.id || p?.sub || p?.userId || null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   })();
 
   const [items, setItems] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [joining, setJoining] = React.useState<string | null>(null);
-  const [showCreate, setShowCreate] = React.useState(false);
 
   // filtreler
-  const [level, setLevel]   = React.useState<string>("Hepsi");
+  const [level, setLevel] = React.useState<string>("Hepsi");
   const [format, setFormat] = React.useState<string>("Hepsi");
   const [hidePast, setHidePast] = React.useState(true);
 
@@ -679,7 +708,10 @@ function MatchesScreen() {
 
   async function loadPrefs() {
     try {
-      const token = getToken();
+      const token =
+        localStorage.getItem("token") ||
+        localStorage.getItem("access_token") ||
+        localStorage.getItem("jwt");
       if (!token) return;
       const r = await fetch(`${API_URL}/users/me`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -691,9 +723,22 @@ function MatchesScreen() {
     } catch {}
   }
 
-  React.useEffect(() => { refresh(); loadPrefs(); }, []);
+  function logout() {
+  try {
+    localStorage.removeItem('token');
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('jwt');
+  } catch {}
+  // LoginScreen'e dön (sende login root '/' ekranında)
+  window.location.href = '/';
+}
 
-  // eksik ve benim pozisyonum
+
+  React.useEffect(() => {
+    refresh();
+    loadPrefs();
+  }, []);
+
   function missingOf(m: any): string[] {
     const slots: any[] = Array.isArray(m.slots) ? m.slots : [];
     return slots.filter((s) => !s.userId).map((s) => s.pos);
@@ -703,42 +748,88 @@ function MatchesScreen() {
     const s = slots.find((s) => s.userId === meId);
     return s?.pos || null;
   }
-
-  // hızlı katıl: sadece tercihlerden boş varsa katılsın
+  function getAuthToken(): string | null {
+  try {
+    const t =
+      localStorage.getItem("token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("jwt");
+    return t || null;
+  } catch {
+    return null;
+  }
+}
+function isExpired(jwt: string): boolean {
+  try {
+    const p = JSON.parse(atob(jwt.split(".")[1] || ""));
+    if (!p?.exp) return false;
+    const nowSec = Math.floor(Date.now() / 1000);
+    return p.exp <= nowSec;
+  } catch {
+    return false;
+  }
+}
+  // Katıl: ilk 3 tercihten otomatik dener; yoksa detaya gönderir
   async function joinQuick(m: any) {
-    const token = getToken();
-    if (!token) { alert("Lütfen önce giriş yap."); return; }
+    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    const token = getAuthToken();
+    if (!token) { alert("Oturum gerekli. Lütfen giriş yapın."); return; }
+    if (isExpired(token)) { alert("Oturum süreniz dolmuş. Lütfen tekrar giriş yapın."); return; }
+
+     // Boş pozisyonlar ve tercihlerden ilk uygun olanı seç
+     const miss: string[] = missingOf(m);      // örn: ["GK","RB","CM",...]
+     const chosenPos = prefs.find((p) => miss.includes(p)) || null;
+
+     // Hiçbiri boş değilse, detaya yönlendir
+     if (!chosenPos) {
+      window.location.href = `/match/${m.id}?selectPosition=1`;
+      return;
+    }
 
     setJoining(m.id);
     try {
-      const r = await fetch(`${API_URL}/matches/join`, {
+      const r = await fetch(`${api}/matches/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ matchId: m.id, strict: true }), // kritik: tercih dışına düşmesin
+        body: JSON.stringify({ matchId: m.id, pos: chosenPos }),
       });
-      const data = await r.json();
 
-      if (r.status === 401) { alert("Yetkisiz (Unauthorized)"); return; }
-      if (r.status === 409 && data?.message === "no preferred open slot") {
-        alert("Tercih mevki yok.");
+      // Tanılama için basit log (Network tab görmeyi kolaylaştırır)
+      const respText = await r.clone().text().catch(() => "");
+      console.log("JOIN /matches/join", r.status, respText);
+
+      if (r.status === 409) {
+        window.location.href = `/match/${m.id}?selectPosition=1`;
         return;
       }
+      if (r.status === 401 || r.status === 403) {
+        alert("Oturum gerekli. Lütfen giriş yapın.");
+        return;
+      }
+
+      const data = respText ? JSON.parse(respText) : {};
       if (!r.ok || !data?.ok) throw new Error(data?.message || "Katılım başarısız");
 
-      refresh();
+      await refresh();
     } catch (e: any) {
-      alert(e?.message || "Katılım başarısız");
+      alert(e?.message || "Katılım sırasında hata oluştu");
     } finally {
       setJoining(null);
     }
   }
 
   async function leave(m: any) {
-    const token = getToken();
-    if (!token) { alert("Lütfen önce giriş yap."); return; }
+    const token =
+      localStorage.getItem("token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("jwt");
+    if (!token) {
+      alert("Lütfen önce giriş yap.");
+      return;
+    }
 
     try {
       const r = await fetch(`${API_URL}/matches/leave`, {
@@ -757,76 +848,94 @@ function MatchesScreen() {
     }
   }
 
-  // admin kısa yollar
-  async function backfillSlots() {
-    try {
-      const r = await fetch(`${API_URL}/matches/backfill-slots`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.message || "Backfill başarısız");
-      alert(`Düzeltildi: ${d.updated}`); refresh();
-    } catch (e: any) { alert(e?.message || "Backfill hata"); }
-  }
-  async function deleteOld() {
-    try {
-      const r = await fetch(`${API_URL}/matches/delete-old`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.message || "Silme başarısız");
-      alert(`Silindi: ${d.deleted}`); refresh();
-    } catch (e: any) { alert(e?.message || "Silme hata"); }
-  }
-
   // filtrelenmiş liste
   const filtered = items.filter((m) => {
-    if (hidePast && m.time) { try { if (new Date(m.time) < new Date()) return false; } catch {} }
-    if (level  !== "Hepsi" && m.level  !== level)  return false;
+    if (hidePast && m.time) {
+      try {
+        if (new Date(m.time) < new Date()) return false;
+      } catch {}
+    }
+    if (level !== "Hepsi" && m.level !== level) return false;
     if (format !== "Hepsi" && m.format !== format) return false;
     return true;
   });
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      {/* Üst bar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => setShowCreate((v) => !v)}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
+      {/* === ÜST BAR: Maç Oluştur • Filtreler • Yenile === */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {/* Maç Oluştur → /matches/new */}
+        <Link
+          href="/matches/new"
+          className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
         >
           Maç Oluştur
-        </button>
-        <button onClick={refresh} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Yenile</button>
-        <button onClick={backfillSlots} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Slot Düzelt (Admin)</button>
-        <button onClick={deleteOld} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Eski Maçları Sil (Admin)</button>
+        </Link>
 
-        <div className="ml-auto flex items-center gap-2 text-sm">
-          <span>Seviye</span>
-          <select value={level} onChange={(e)=>setLevel(e.target.value)} className="rounded bg-neutral-800 px-2 py-1">
-            <option>Hepsi</option><option>Kolay</option><option>Orta</option><option>Zor</option>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <label className="text-xs opacity-75">Seviye</label>
+          <select
+            value={level}
+            onChange={(e) => setLevel(e.target.value)}
+            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm"
+          >
+            <option>Hepsi</option>
+            <option>Kolay</option>
+            <option>Orta</option>
+            <option>Zor</option>
           </select>
-          <span>Format</span>
-          <select value={format} onChange={(e)=>setFormat(e.target.value)} className="rounded bg-neutral-800 px-2 py-1">
-            <option>Hepsi</option><option>5v5</option><option>7v7</option><option>8v8</option><option>11v11</option>
+
+          <label className="ml-2 text-xs opacity-75">Format</label>
+          <select
+            value={format}
+            onChange={(e) => setFormat(e.target.value)}
+            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm"
+          >
+            <option>Hepsi</option>
+            <option>5v5</option>
+            <option>7v7</option>
+            <option>11v11</option>
           </select>
-          <label className="inline-flex items-center gap-1">
-            <input type="checkbox" checked={hidePast} onChange={(e)=>setHidePast(e.target.checked)} />
-            Geçmişi Gizle
+
+          <label className="ml-2 flex items-center gap-1 text-xs opacity-75">
+            <input
+              type="checkbox"
+              checked={hidePast}
+              onChange={(e) => setHidePast(e.target.checked)}
+            />
+            Geçmişi gizle
           </label>
-        </div>
+
+          <button
+            onClick={() => refresh()}
+            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+          >
+            Yenile
+          </button>
+
+          <Link
+            href="/discover"
+            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+          >
+            Keşfet
+          </Link>
+          
+          <button
+            onClick={logout}
+            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+          >
+            Çıkış
+          </button>
+        </div>  
       </div>
 
-      {/* Maç oluştur formu (dosyada CreateMatchForm varsa göster) */}
-      {showCreate && typeof CreateMatchForm === "function" && (
-        <CreateMatchForm onCreated={() => { setShowCreate(false); refresh(); }} />
+      {/* yükleme/boş durumları */}
+      {loading && <div className="text-sm text-neutral-400">Yükleniyor…</div>}
+      {!loading && !filtered.length && (
+        <div className="text-sm text-neutral-400">Kayıt yok</div>
       )}
 
-      {loading && <div className="text-sm text-neutral-400">Yükleniyor…</div>}
-      {!loading && !filtered.length && <div className="text-sm text-neutral-400">Kayıt yok</div>}
-
+      {/* maç kartları */}
       <div className="space-y-3">
         {filtered.map((m) => {
           const mine = myPos(m);
@@ -834,34 +943,55 @@ function MatchesScreen() {
           const prefHit = prefs.find((p) => miss.includes(p)); // tercihlerden boş var mı?
 
           return (
-            <div key={m.id} className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+            <div
+              key={m.id}
+              className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4"
+            >
               <div className="flex items-start justify-between gap-3">
+                {/* SOL: başlık & bilgiler */}
                 <div>
                   <div className="text-base font-semibold">{m.title || "Maç"}</div>
                   <div className="mt-1 text-xs text-neutral-300">
                     {m.location || "—"} • {m.level || "—"} • {m.format || "—"}
-                    {m.time && <> • {new Date(m.time).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</>}
+                    {m.time && (
+                      <>
+                        {" "}
+                        •{" "}
+                        {new Date(m.time).toLocaleString([], {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
+                      </>
+                    )}
                   </div>
+
                   <div className="mt-1 text-xs">
                     {mine ? (
-                      <span className="text-emerald-400">Katıldın • Pozisyonun: {mine}</span>
+                      <span className="text-emerald-400">
+                        Katıldın • Pozisyonun: {mine}
+                      </span>
                     ) : miss.length ? (
                       prefHit ? (
-                        <span className="text-emerald-400">Eksik: {miss.join(", ")}</span>
+                        <span className="text-emerald-400">
+                          Eksik: {miss.join(", ")}
+                        </span>
                       ) : (
-                        <span className="text-amber-400">Tercih mevki yok</span>
+                        <span className="text-amber-400">
+                          Tercih mevki yok • Detaydan seçebilirsiniz
+                        </span>
                       )
                     ) : (
-                      <span className="text-neutral-400">Pozisyonu: dolu</span>
+                      <span className="text-neutral-400">Pozisyonlar dolu</span>
                     )}
                   </div>
                 </div>
 
+                {/* SAĞ: aksiyonlar */}
                 <div className="flex items-center gap-2">
                   {!mine ? (
                     <button
                       onClick={() => joinQuick(m)}
-                      disabled={joining === m.id || miss.length === 0 || !prefHit}
+                      disabled={joining === m.id}
                       className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
                     >
                       {joining === m.id ? "Katılıyor…" : "Katıl"}
@@ -890,6 +1020,7 @@ function MatchesScreen() {
     </div>
   );
 }
+
 
 
 /* ---------------------- Profil ekranı ---------------------- */

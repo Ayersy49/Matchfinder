@@ -7,8 +7,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 function getToken() {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("jwt")
+  );
 }
+
 async function safeJson<T>(res: Response): Promise<T | null> {
   const txt = await res.text();
   if (!txt) return null;
@@ -61,15 +66,11 @@ export default function NewMatchPage() {
       });
 
       const data = await safeJson<{ id: string }>(res);
-      if (!res.ok) {
-        throw new Error((data as any)?.message || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error((data as any)?.message || `HTTP ${res.status}`);
+
       const newId = data?.id;
-      if (newId) {
-        r.push(`/match/${newId}`);
-      } else {
-        setError("Oluşturuldu ancak id alınamadı.");
-      }
+      if (newId) r.push(`/match/${newId}`);
+      else setError("Oluşturuldu ancak id alınamadı.");
     } catch (e: any) {
       setError(e?.message || "Kayıt hatası");
     } finally {
@@ -169,10 +170,10 @@ export default function NewMatchPage() {
 
         <div className="flex items-center justify-between pt-2">
           <a
-            href="/matches"
+            href="/landing"  // <<< BURASI DEĞİŞTİ
             className="rounded-xl px-3 py-2 text-sm hover:underline"
           >
-            ← Listeye dön
+            ← Ana ekrana dön
           </a>
           <button
             disabled={submitting}
