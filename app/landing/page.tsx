@@ -707,20 +707,16 @@ function MatchesScreen() {
   }
 
   async function loadPrefs() {
-    try {
-      const token =
-        localStorage.getItem("token") ||
-        localStorage.getItem("access_token") ||
-        localStorage.getItem("jwt");
-      if (!token) return;
-      const r = await fetch(`${API_URL}/users/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const d = await r.json();
-      if (Array.isArray(d?.positions)) {
-        setPrefs(d.positions.map(String).slice(0, 3));
-      }
-    } catch {}
+    const token =
+      localStorage.getItem('token') ||
+      localStorage.getItem('access_token') ||
+      localStorage.getItem('jwt') ||
+      '';
+
+    const r = await fetch(`${API_URL}/users/me`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: 'no-store',
+    });
   }
 
   function logout() {
@@ -1045,27 +1041,25 @@ function ProfileScreen() {
   }, [me]);
 
   async function save() {
-    try {
+    const token =
+      localStorage.getItem('token') ||
+      localStorage.getItem('access_token') ||
+      localStorage.getItem('jwt') ||
+      '';
       const r = await fetch(`${API_URL}/users/me`, {
-        method: "PUT",
+        method: 'PUT',
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           dominantFoot: foot,
           level: generalLevel,
           positions: prefs,
           positionLevels,
-          availability, // <-- YENİ
+          availability,
         }),
       });
-      if (!r.ok) throw new Error(await r.text());
-      alert("Kaydedildi!");
-      refresh?.();
-    } catch (e: any) {
-      alert("Kaydetme başarısız: " + e?.message);
-    }
   }
 
   // Basit pozisyon seçimleri (mevcut kodundaki kısım)
