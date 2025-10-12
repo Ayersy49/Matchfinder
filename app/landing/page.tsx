@@ -3,38 +3,71 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarDays, UserRound, Shield, LogIn, Star, Footprints } from "lucide-react";
 import { useMe } from "@/lib/useMe";
-import Link from "next/link"; 
-import { useRouter } from "next/navigation";
-
-<Link href="/invites" className="rounded-lg bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700">
-  Davetler
-</Link>
+import Link from "next/link";
+import { authHeader, clearToken, getToken, setToken } from "@/lib/auth";
+import { usePathname } from "next/navigation";
 
 // API kökü
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-function getToken() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
-}
-
+/* ------------------ Üst Bar: Davetler/Arkadaşlar butonu ------------------ */
 function InvitesBell() {
   return (
     <Link
-      href="/invites"
+      href="/friends"                      // ← /invites yerine /friends
       className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-      title="Davetler"
+      title="Davetler / Arkadaşlar"
     >
       Davetler
-      {/* Badge koymak istersen: 
-      <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
-        1
-      </span> 
+      {/* Badge eklemek istersen:
+      <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">1</span>
       */}
     </Link>
   );
 }
 
+// app/landing/page.tsx içinde, InvitesBell yanına ekleyin
+function FriendsBell() {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const [count, setCount] = React.useState(0);
+
+  async function load() {
+    try {
+      const r = await fetch(`${API_URL}/friends/requests/incoming?status=PENDING`, {
+        headers: { ...authHeader() },
+        cache: "no-store",
+      });
+      if (r.status === 401) return; // login akışı zaten sizde var
+      const data = await r.json().catch(() => ({}));
+      const n = Array.isArray(data?.items) ? data.items.length : 0;
+      setCount(n);
+    } catch {}
+  }
+
+  React.useEffect(() => {
+    load();
+    const t = setInterval(load, 5000); // 5 sn’de bir tazele
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <Link
+      href="/friends"
+      className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+      title="Arkadaşlar"
+    >
+      Arkadaşlar
+      {count > 0 && (
+        <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+          {count}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+
+/* ---------------------- Tipler ---------------------- */
 type MatchLite = {
   id: string;
   title?: string | null;
@@ -46,7 +79,6 @@ type MatchLite = {
   createdAt?: string;
 };
 
-// --- slot tipi & eksik hesaplama helper'ı ---
 type SlotLite = { pos: string; userId?: string | null };
 
 function missingOf(m: any): string[] {
@@ -55,11 +87,10 @@ function missingOf(m: any): string[] {
     : [];
 }
 
-
 const LEVELS = ["Kolay", "Orta", "Zor"] as const;
-const FORMATS = ["5v5", "7v7", "8v8", "11v11"] as const
+const FORMATS = ["5v5", "7v7", "8v8", "11v11"] as const;
 
-// Arkaplan görselleri (demo)
+// Arkaplan görselleri
 const STADIUMS = [
   "https://images.unsplash.com/photo-1530541930197-ff16ac917b0e?q=80&w=1600&auto=format&fit=crop",
   "https://images.unsplash.com/photo-1486286701208-1d58e9338013?q=80&w=1600&auto=format&fit=crop",
@@ -97,7 +128,7 @@ const DAYS = [
   { key: "sat", label: "Cmt" },
   { key: "sun", label: "Paz" },
 ];
-// Basit normalize: true ise "20:00-24:00" slotu
+
 function normalizeAvailability(raw: any): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const d of DAYS) {
@@ -136,9 +167,7 @@ function AvailabilityPicker({
               type="button"
               onClick={() => toggleDay(d.key)}
               className={`w-full rounded-xl px-4 py-3 text-sm ${
-                active
-                  ? "bg-emerald-600 text-neutral-950"
-                  : "bg-neutral-800 hover:bg-neutral-700"
+                active ? "bg-emerald-600 text-neutral-950" : "bg-neutral-800 hover:bg-neutral-700"
               }`}
             >
               {d.label} {active ? "20:00–24:00" : "—"}
@@ -146,18 +175,16 @@ function AvailabilityPicker({
           );
         })}
       </div>
-      <div className="mt-2 text-xs text-neutral-400">
-        (MVP: her gün için tek slot; sonraki iterasyonda esnek saat aralıkları eklenecek)
-      </div>
+      <div className="mt-2 text-xs text-neutral-400">(MVP: her gün için tek slot; sonraki iterasyonda esnek saat aralıkları eklenecek)</div>
     </div>
   );
 }
-// Profil/oyuncu tipleri
-// --- Dizilişler (saha yerleşimleri) ---
+
+/* ---------------------- Dizilişler ---------------------- */
 type PositionKey =
   | "GK" | "LB" | "CB" | "RB" | "LWB" | "RWB"
   | "DM" | "CM" | "AM" | "LW" | "RW" | "ST"
-  | "SB" | "STP"; // mevcut kodda SB/STP de var
+  | "SB" | "STP";
 
 type PitchSlot = { key: PositionKey; label: string; x: number; y: number };
 
@@ -175,7 +202,6 @@ const FORMATIONS: Record<string, PitchSlot[]> = {
     { key: "RW",  label: "Sağ Kanat",   x: 60, y: 80 },
     { key: "ST",  label: "Santrafor",   x: 84, y: 50 },
   ],
-
   "4-3-3": [
     { key: "GK",  label: "Kaleci",      x: 6,  y: 50 },
     { key: "LB",  label: "Sol Bek",     x: 20, y: 20 },
@@ -189,31 +215,19 @@ const FORMATIONS: Record<string, PitchSlot[]> = {
     { key: "ST",  label: "Santrafor",   x: 84, y: 50 },
     { key: "RW",  label: "Sağ Kanat",   x: 70, y: 80 },
   ],
-
-"3-5-2": [
-  // Kaleci
-  { key: "GK",  label: "Kaleci", x: 8,  y: 50 },
-
-  // 3 Stoper (LCB, CB, RCB)
-  { key: "CB",  label: "Stoper", x: 22, y: 32 },
-  { key: "CB",  label: "Stoper", x: 22, y: 50 },
-  { key: "CB",  label: "Stoper", x: 22, y: 68 },
-
-  // Çift ön libero (CDM)
-  { key: "DM",  label: "Ön Libero", x: 40, y: 42 },
-  { key: "DM",  label: "Ön Libero", x: 40, y: 58 },
-
-  // Orta saha ortası (CAM)
-  { key: "AM",  label: "10 Numara", x: 58, y: 50 },
-
-  // Kanat orta sahalar (LM/RM -> LW/RW)
-  { key: "LWB",  label: "LMB", x: 50, y: 20 },
-  { key: "RWB",  label: "RMB", x: 50, y: 80 },
-
-  // Çift forvet
-  { key: "ST",  label: "Santrafor", x: 86, y: 40 },
-  { key: "ST",  label: "Santrafor", x: 86, y: 60 },
-],
+  "3-5-2": [
+    { key: "GK",  label: "Kaleci", x: 8,  y: 50 },
+    { key: "CB",  label: "Stoper", x: 22, y: 32 },
+    { key: "CB",  label: "Stoper", x: 22, y: 50 },
+    { key: "CB",  label: "Stoper", x: 22, y: 68 },
+    { key: "DM",  label: "Ön Libero", x: 40, y: 42 },
+    { key: "DM",  label: "Ön Libero", x: 40, y: 58 },
+    { key: "AM",  label: "10 Numara", x: 58, y: 50 },
+    { key: "LWB", label: "LMB", x: 50, y: 20 },
+    { key: "RWB", label: "RMB", x: 50, y: 80 },
+    { key: "ST",  label: "Santrafor", x: 86, y: 40 },
+    { key: "ST",  label: "Santrafor", x: 86, y: 60 },
+  ],
 };
 
 type Traits = {
@@ -232,6 +246,7 @@ function computeSI(t: Traits) {
   return Math.round(100 * (0.6 * P + 0.4 * Nminus));
 }
 
+/* ====================== Sayfa ====================== */
 export default function Page() {
   const [authed, setAuthed] = useState(false);
 
@@ -253,7 +268,6 @@ export default function Page() {
     </div>
   );
 }
-
 /* ---------------------- Login ---------------------- */
 
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
@@ -292,23 +306,22 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phone: normalizePhone(phone),
-          code: normalizeCode(code),
+          code:  normalizeCode(code),
         }),
       });
       const data = await r.json();
 
-      if (!data?.ok) {
+      if (!data?.ok || !data?.accessToken) {
         const msg =
-          data?.reason === "OTP_expired"
-            ? "Kodun süresi doldu"
-            : data?.reason === "OTP_mismatch"
-            ? "Kod hatalı"
-            : "Giriş başarısız";
+          data?.reason === "OTP_expired"  ? "Kodun süresi doldu" :
+          data?.reason === "OTP_mismatch" ? "Kod hatalı" :
+          "Giriş başarısız";
         alert(msg);
         return;
       }
 
-      if (data.accessToken) localStorage.setItem("token", data.accessToken);
+      // <<< ESKİ localStorage.setItem(...) yerine sadece bu:
+      setToken(data.accessToken);
       onSuccess();
     } catch {
       alert("Giriş sırasında hata oluştu");
@@ -408,6 +421,12 @@ function MainShell({
         <div className="text-lg font-semibold">MatchFinder</div>
         {/* >>> EKLENDİ: davet zili + mevcut yazı */}
         <div className="flex items-center gap-2">
+          <Link
+            href="/friends"
+            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+          >
+            Arkadaşlar
+          </Link>
           <InvitesBell />
         <div className="text-xs text-neutral-400">MVP Demo</div>
         </div>
@@ -535,163 +554,37 @@ function CreateMatchForm({ onCreated }: { onCreated: (m: MatchLite) => void }) {
   );
 }
 
-// ---- Maçlar listesi ----
-function MatchesList() {
-  const [items, setItems] = React.useState<any[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [toastMsg, setToastMsg] = React.useState<string | null>(null);
 
-  function toast(s: string) {
-    setToastMsg(s);
-    setTimeout(() => setToastMsg(null), 1600);
-  }
 
-  async function fetchMatches() {
-    setLoading(true);
-    try {
-      const r = await fetch(`${API_URL}/matches`, { cache: "no-store" });
-      const d = await r.json();
-      setItems(Array.isArray(d) ? d : []);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  React.useEffect(() => {
-    fetchMatches();
-  }, []);
-
-  async function quickJoin(matchId: string) {
-    try {
-      const r = await fetch(`${API_URL}/matches/join`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken()}`,
-        },
-        body: JSON.stringify({ matchId }), // pos YOK → backend tercihlerini dener
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data?.message || "Katılım olmadı");
-
-      toast(`Katıldın: ${data.pos}`);
-      // listeyi güncelle (eksikler ve buton durumu değişsin)
-      fetchMatches();
-    } catch (e: any) {
-      alert(e?.message || "Katılım sırasında hata");
-    }
-  }
-
-  if (loading) return <div className="text-sm text-neutral-400">Yükleniyor…</div>;
-  if (!items.length) return <div className="text-sm text-neutral-400">Kayıt yok</div>;
-
-  return (
-    <div className="mx-auto max-w-3xl p-4">
-      <h2 className="text-lg font-semibold">Bu Hafta Açık Katılım</h2>
-
-      <div className="mt-4 space-y-3">
-        {items.map((m) => {
-          const missing = missingOf(m); // <— eksikleri slots’tan hesapla
-          return (
-            <div
-              key={m.id}
-              className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4"
-            >
-              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="text-base font-medium">
-                    {m.title || "Maç"}
-                  </div>
-                  <div className="mt-1 text-sm text-neutral-300">
-                    {m.location || "—"} · {m.level || "—"} · {m.format || "—"}{" "}
-                    ·{" "}
-                    {m.time
-                      ? new Date(m.time).toLocaleString([], {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })
-                      : ""}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-40"
-                    onClick={() => quickJoin(m.id)}
-                    disabled={missing.length === 0} // boş slot yoksa katılma
-                  >
-                    Katıl
-                  </button>
-
-                  <Link
-                    href={`/match/${m.id}`}
-                    prefetch={false}
-                    className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                  >
-                    Detay
-                  </Link>
-                </div>
-              </div>
-
-              {/* Eksik pozisyon bilgisi */}
-              <div className="mt-2 text-xs text-emerald-400">
-                {missing.length ? (
-                  <>Eksik: {missing.join(", ")}</>
-                ) : (
-                  <>Pozisyon seçilmemiş ya da dolu</>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* minik toast */}
-      {toastMsg && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-neutral-950 shadow-lg">
-          {toastMsg}
-        </div>
-      )}
-    </div>
-  );
-}
-
+//
 // Maç Ekranı
 // ---- Maçlar sekmesi: liste + filtre + hızlı katıl/ayrıl ----
 // ---- Maçlar sekmesi: liste + filtre + hızlı katıl/ayrıl ----
 function MatchesScreen() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const { me } = useMe();
+  const meId = me?.id ?? null;
 
-  // JWT'den kendi id'm
-  const meId: string | null = (() => {
-    try {
-      const t =
-        (typeof window !== "undefined" && (localStorage.getItem("token") ||
-        localStorage.getItem("access_token") ||
-        localStorage.getItem("jwt"))) ||
-        null;
-      if (!t) return null;
-      const p = JSON.parse(atob(t.split(".")[1] || ""));
-      return p?.id || p?.sub || p?.userId || null;
-    } catch {
-      return null;
-    }
-  })();
-
-  const [items, setItems] = React.useState<any[]>([]);
+  // Liste ve UI durumları
+  const [items, setItems] = React.useState<MatchLite[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [joining, setJoining] = React.useState<string | null>(null);
+  const [joining, setJoining] = React.useState<string | null>(null); // ← burada TANIMLI
 
-  // filtreler
-  const [level, setLevel] = React.useState<string>("Hepsi");
-  const [format, setFormat] = React.useState<string>("Hepsi");
+  // Filtreler ("" = Hepsi)
+  const [level, setLevel] = React.useState<"" | "Kolay" | "Orta" | "Zor">("");
+  const [format, setFormat] = React.useState<"" | "5v5" | "7v7" | "8v8" | "11v11">("");
   const [hidePast, setHidePast] = React.useState(true);
 
-  // kullanıcının tercihleri (ilk 3)
-  const [prefs, setPrefs] = React.useState<string[]>([]);
+  // Kullanıcının ilk 3 tercihi
+  const prefs = React.useMemo<string[]>(() => {
+    const list = Array.isArray((me as any)?.topPositions)
+      ? (me as any).topPositions
+      : Array.isArray(me?.positions)
+      ? me!.positions
+      : [];
+    return list.slice(0, 3);
+  }, [me]);
 
   async function refresh() {
     setLoading(true);
@@ -706,161 +599,152 @@ function MatchesScreen() {
     }
   }
 
-  async function loadPrefs() {
-    const token =
-      localStorage.getItem('token') ||
-      localStorage.getItem('access_token') ||
-      localStorage.getItem('jwt') ||
-      '';
-
-    const r = await fetch(`${API_URL}/users/me`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      cache: 'no-store',
-    });
-  }
-
-  function logout() {
-  try {
-    localStorage.removeItem('token');
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('jwt');
-  } catch {}
-  // LoginScreen'e dön (sende login root '/' ekranında)
-  window.location.href = '/';
-}
-
-
   React.useEffect(() => {
     refresh();
-    loadPrefs();
   }, []);
 
+  // Yardımcılar
   function missingOf(m: any): string[] {
-    const slots: any[] = Array.isArray(m.slots) ? m.slots : [];
+    const slots: any[] = Array.isArray(m?.slots) ? m.slots : [];
     return slots.filter((s) => !s.userId).map((s) => s.pos);
   }
   function myPos(m: any): string | null {
-    const slots: any[] = Array.isArray(m.slots) ? m.slots : [];
+    const slots: any[] = Array.isArray(m?.slots) ? m.slots : [];
     const s = slots.find((s) => s.userId === meId);
     return s?.pos || null;
   }
-  function getAuthToken(): string | null {
-  try {
-    const t =
-      localStorage.getItem("token") ||
-      localStorage.getItem("access_token") ||
-      localStorage.getItem("jwt");
-    return t || null;
-  } catch {
-    return null;
+
+  // Çıkış
+  function logout() {
+    clearToken();
+    window.location.href = "/";
   }
-}
-function isExpired(jwt: string): boolean {
-  try {
-    const p = JSON.parse(atob(jwt.split(".")[1] || ""));
-    if (!p?.exp) return false;
-    const nowSec = Math.floor(Date.now() / 1000);
-    return p.exp <= nowSec;
-  } catch {
-    return false;
-  }
-}
-  // Katıl: ilk 3 tercihten otomatik dener; yoksa detaya gönderir
-  async function joinQuick(m: any) {
-    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-    const token = getAuthToken();
-    if (!token) { alert("Oturum gerekli. Lütfen giriş yapın."); return; }
-    if (isExpired(token)) { alert("Oturum süreniz dolmuş. Lütfen tekrar giriş yapın."); return; }
 
-     // Boş pozisyonlar ve tercihlerden ilk uygun olanı seç
-     const miss: string[] = missingOf(m);      // örn: ["GK","RB","CM",...]
-     const chosenPos = prefs.find((p) => miss.includes(p)) || null;
-
-     // Hiçbiri boş değilse, detaya yönlendir
-     if (!chosenPos) {
-      window.location.href = `/match/${m.id}?selectPosition=1`;
-      return;
-    }
-
+  // Hızlı katıl: me tercihlerinden boş olanı auto seç, yoksa detaya gönder
+  async function quickJoin(m: MatchLite) {
     setJoining(m.id);
+
     try {
-      const r = await fetch(`${api}/matches/join`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ matchId: m.id, pos: chosenPos }),
+      // 0) Header
+      const hdr = authHeader();
+      if (!hdr.Authorization) {
+        alert("Oturum gerekli. Lütfen giriş yapın.");
+        window.location.href = "/";
+        return;
+      }
+
+      // 0.1) Katılmadan önce token gerçekten geçerli mi? (hızlı kontrol)
+      const chk = await fetch(`${API_URL}/users/me`, { headers: { ...hdr }, cache: "no-store" });
+      if (chk.status === 401) {
+        clearToken();
+        alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
+        window.location.href = "/";
+        return;
+      }
+
+      // 1) Detaydan boş pozisyonları al
+      const rDet = await fetch(`${API_URL}/matches/${m.id}`, {
+        cache: "no-store",
+        headers: { ...hdr },
       });
+      const det = await rDet.json().catch(() => ({}));
+      const slots: any[] = Array.isArray(det?.slots) ? det.slots : [];
+      const missing: string[] = slots.filter((s: any) => !s.userId).map((s: any) => s.pos);
 
-      // Tanılama için basit log (Network tab görmeyi kolaylaştırır)
-      const respText = await r.clone().text().catch(() => "");
-      console.log("JOIN /matches/join", r.status, respText);
+      // 2) Tercihlerden ilk uygun olanı seç; hiçbiri uymuyorsa ilk boşu dene
+      const chosenPos =
+        (prefs ?? []).find((p) => missing.includes(p)) ?? (missing[0] ?? null);
 
-      if (r.status === 409) {
+      // 3) Hiç boş yoksa (veya tercih yoksa) detaya yönlendir → kullanıcı slot seçsin
+      if (!chosenPos) {
         window.location.href = `/match/${m.id}?selectPosition=1`;
         return;
       }
-      if (r.status === 401 || r.status === 403) {
-        alert("Oturum gerekli. Lütfen giriş yapın.");
+
+      // 4) Katıl çağrısı
+      const r = await fetch(`${API_URL}/matches/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...hdr },
+        body: JSON.stringify({ matchId: m.id, pos: chosenPos }),
+      });
+
+      if (r.status === 401) {
+        // Sunucu “Unauthorized” dedi → token’ı temizleyip login’e
+        clearToken();
+        alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
+        window.location.href = "/";
         return;
       }
 
-      const data = respText ? JSON.parse(respText) : {};
-      if (!r.ok || !data?.ok) throw new Error(data?.message || "Katılım başarısız");
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data?.ok === false) {
+        console.debug("JOIN FAIL", r.status, data); // ← detay görebil
+        alert(data?.message || "Katılım başarısız.");
+        window.location.href = `/match/${m.id}`; // yine de detaya geç
+        return;
+      }
 
-      await refresh();
+      // Başarılı → detaya
+      window.location.href = `/match/${m.id}`;
     } catch (e: any) {
-      alert(e?.message || "Katılım sırasında hata oluştu");
+      console.debug("JOIN EX", e);
+      alert(e?.message || "Katılım sırasında hata.");
+      window.location.href = `/match/${m.id}`;
     } finally {
       setJoining(null);
     }
   }
 
-  async function leave(m: any) {
-    const token =
-      localStorage.getItem("token") ||
-      localStorage.getItem("access_token") ||
-      localStorage.getItem("jwt");
-    if (!token) {
-      alert("Lütfen önce giriş yap.");
-      return;
-    }
-
+  // Ayrıl (BACKEND: /matches/:id/leave)
+  async function leave(m: MatchLite) {
     try {
-      const r = await fetch(`${API_URL}/matches/leave`, {
+      const hdr = authHeader();
+      if (!hdr.Authorization) {
+        alert("Oturum gerekli. Lütfen giriş yapın.");
+        window.location.href = "/";
+        return;
+      }
+
+      const r = await fetch(`${API_URL}/matches/${m.id}/leave`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ matchId: m.id }),
+        headers: { "Content-Type": "application/json", ...hdr },
       });
-      const data = await r.json();
-      if (!r.ok || !data?.ok) throw new Error(data?.message || "Ayrılma başarısız");
-      refresh();
+
+      if (r.status === 401) {
+        clearToken();
+        alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
+        window.location.href = "/";
+        return;
+      }
+
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data?.ok === false) {
+        console.debug("LEAVE FAIL", r.status, data);
+        throw new Error(data?.message || "Ayrılma başarısız");
+      }
+
+      await refresh();
     } catch (e: any) {
       alert(e?.message || "Ayrılma başarısız");
     }
   }
 
-  // filtrelenmiş liste
+  // Filtrelenmiş liste ("" Hepsi demek)
   const filtered = items.filter((m) => {
     if (hidePast && m.time) {
       try {
         if (new Date(m.time) < new Date()) return false;
       } catch {}
     }
-    if (level !== "Hepsi" && m.level !== level) return false;
-    if (format !== "Hepsi" && m.format !== format) return false;
+    if (level && m.level !== level) return false;
+    if (format && m.format !== format) return false;
     return true;
   });
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      {/* === ÜST BAR: Maç Oluştur • Filtreler • Yenile === */}
+      {/* Üst bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        {/* Maç Oluştur → /matches/new */}
         <Link
           href="/matches/new"
           className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
@@ -872,10 +756,10 @@ function isExpired(jwt: string): boolean {
           <label className="text-xs opacity-75">Seviye</label>
           <select
             value={level}
-            onChange={(e) => setLevel(e.target.value)}
+            onChange={(e) => setLevel(e.target.value as any)}
             className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm"
           >
-            <option>Hepsi</option>
+            <option value="">Hepsi</option>
             <option>Kolay</option>
             <option>Orta</option>
             <option>Zor</option>
@@ -884,12 +768,13 @@ function isExpired(jwt: string): boolean {
           <label className="ml-2 text-xs opacity-75">Format</label>
           <select
             value={format}
-            onChange={(e) => setFormat(e.target.value)}
+            onChange={(e) => setFormat(e.target.value as any)}
             className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm"
           >
-            <option>Hepsi</option>
+            <option value="">Hepsi</option>
             <option>5v5</option>
             <option>7v7</option>
+            <option>8v8</option>
             <option>11v11</option>
           </select>
 
@@ -903,7 +788,7 @@ function isExpired(jwt: string): boolean {
           </label>
 
           <button
-            onClick={() => refresh()}
+            onClick={refresh}
             className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
           >
             Yenile
@@ -915,28 +800,28 @@ function isExpired(jwt: string): boolean {
           >
             Keşfet
           </Link>
-          
+
           <button
             onClick={logout}
             className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
           >
             Çıkış
           </button>
-        </div>  
+        </div>
       </div>
 
-      {/* yükleme/boş durumları */}
+      {/* yükleme/boş */}
       {loading && <div className="text-sm text-neutral-400">Yükleniyor…</div>}
       {!loading && !filtered.length && (
         <div className="text-sm text-neutral-400">Kayıt yok</div>
       )}
 
-      {/* maç kartları */}
+      {/* kartlar */}
       <div className="space-y-3">
         {filtered.map((m) => {
           const mine = myPos(m);
           const miss = missingOf(m);
-          const prefHit = prefs.find((p) => miss.includes(p)); // tercihlerden boş var mı?
+          const prefHit = prefs.find((p) => miss.includes(p));
 
           return (
             <div
@@ -944,9 +829,11 @@ function isExpired(jwt: string): boolean {
               className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4"
             >
               <div className="flex items-start justify-between gap-3">
-                {/* SOL: başlık & bilgiler */}
+                {/* SOL */}
                 <div>
-                  <div className="text-base font-semibold">{m.title || "Maç"}</div>
+                  <div className="text-base font-semibold">
+                    {m.title || "Maç"}
+                  </div>
                   <div className="mt-1 text-xs text-neutral-300">
                     {m.location || "—"} • {m.level || "—"} • {m.format || "—"}
                     {m.time && (
@@ -982,11 +869,11 @@ function isExpired(jwt: string): boolean {
                   </div>
                 </div>
 
-                {/* SAĞ: aksiyonlar */}
+                {/* SAĞ */}
                 <div className="flex items-center gap-2">
                   {!mine ? (
                     <button
-                      onClick={() => joinQuick(m)}
+                      onClick={() => quickJoin(m)}        // ← DİKKAT: m GİDİYOR, m.id DEĞİL
                       disabled={joining === m.id}
                       className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
                     >
@@ -1018,7 +905,6 @@ function isExpired(jwt: string): boolean {
 }
 
 
-
 /* ---------------------- Profil ekranı ---------------------- */
 
 function ProfileScreen() {
@@ -1046,20 +932,34 @@ function ProfileScreen() {
       localStorage.getItem('access_token') ||
       localStorage.getItem('jwt') ||
       '';
+    if (!token) { alert('Giriş yapmalısın.'); return; }
+
+    try {
+      const body = {
+        dominantFoot: foot,               // 'L' | 'R' | 'N'
+        level: generalLevel,              // 1..10
+        positions: Array.from(new Set(prefs)).slice(0, 3), // ilk 3
+        positionLevels,                   // { RW:7, LW:6, ... }
+        availability,                     // { mon: ["20:00-24:00"], ... }
+      };
+
       const r = await fetch(`${API_URL}/users/me`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          dominantFoot: foot,
-          level: generalLevel,
-          positions: prefs,
-          positionLevels,
-          availability,
-        }),
+        body: JSON.stringify(body),
       });
+
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.message || `HTTP ${r.status}`);
+
+      alert('Kaydedildi!');
+      await refresh?.(); // useMe() varsa profil cache’ini yenile
+    } catch (e: any) {
+      alert(e?.message || 'Kaydetme hatası');
+    }
   }
 
   // Basit pozisyon seçimleri (mevcut kodundaki kısım)

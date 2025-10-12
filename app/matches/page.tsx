@@ -132,37 +132,53 @@ export default function MatchesPage() {
   }
 
   async function quickJoin(matchId: string) {
-    if (!getToken()) { alert("Giriş yapmalısın."); r.push("/landing"); return; }
+    const token =
+      localStorage.getItem("token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("jwt");
+    if (!token) { alert("Oturum gerekli. Lütfen giriş yapın."); r.push("/landing"); return; }
+
     setJoiningId(matchId);
+
     try {
-      // detay zaten cache'te; yoksa çek
+      // Detay cache'te yoksa getir
       let detail = details[matchId];
       if (!detail) {
         const dRes = await fetch(`${API_URL}/matches/${matchId}`, {
           cache: "no-store",
-          headers: { Authorization: `Bearer ${getToken()}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
         detail = (await safeJson<MatchDetail>(dRes)) ?? { id: matchId, slots: [] };
       }
+
       const slots = detail.slots ?? [];
-      const prefs: string[] = Array.isArray(me?.positions) ? (me!.positions as string[]) : [];
+      const missing = slots.filter((s) => !s.userId).map((s) => s.pos);
 
-      let chosen: string | null = null;
-      for (const p of prefs) {
-        if (slots.some((s) => s.pos === p && !s.userId)) { chosen = p; break; }
-      }
+      // Sadece ilk 3 tercihten uygun olanı dene
+      const myTop3: string[] = Array.isArray(me?.positions) ? (me!.positions as string[]) : [];
+      const chosen = myTop3.find((p) => missing.includes(p)) || null;
+
+      // Tercihlerden hiçbiri boş değil → detaya
       if (!chosen) {
-        const empty = slots.find((s) => !s.userId);
-        if (empty) chosen = empty.pos;
+        r.push(`/match/${matchId}`);
+        return;
       }
-      if (!chosen) { alert("Bu maçta uygun pozisyon kalmamış."); r.push(`/match/${matchId}`); return; }
 
+      // Katıl
       const jRes = await fetch(`${API_URL}/matches/join`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ matchId, pos: chosen }),
       });
-      if (!jRes.ok) alert((await jRes.text()) || "Katılma başarısız.");
+
+      const data = await safeJson<any>(jRes);
+      if (jRes.status === 409) { r.push(`/match/${matchId}`); return; }
+      if (!jRes.ok || data?.ok === false) throw new Error(data?.message || `HTTP ${jRes.status}`);
+
+      // Başarılıysa yine detaya (katıldığı pozisyonu görsün)
       r.push(`/match/${matchId}`);
     } catch (e: any) {
       alert(e?.message || "Katılma sırasında hata.");
@@ -171,6 +187,7 @@ export default function MatchesPage() {
       setJoiningId(null);
     }
   }
+
 
   async function quickLeave(matchId: string) {
     if (!getToken()) { r.push("/landing"); return; }

@@ -2,14 +2,11 @@
 "use client";
 
 import * as React from "react";
+import { authHeader, getToken } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-function getToken() {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("token") || "";
-}
-
+/* Varsayılan müsaitlik şeması */
 const DEFAULT_AVAILABILITY = {
   mon: { enabled: false, start: "20:00", end: "23:59" },
   tue: { enabled: false, start: "20:00", end: "23:59" },
@@ -34,12 +31,13 @@ type Me = {
 };
 
 function normalizeMe(data: any): Me {
-  const out: Me = {
+  return {
     id: data?.id ?? null,
     phone: data?.phone ?? null,
     dominantFoot: (data?.dominantFoot as Me["dominantFoot"]) ?? "N",
     positions: Array.isArray(data?.positions) ? data.positions : [],
-    preferredFormation: (data?.preferredFormation as Me["preferredFormation"]) ?? "4-2-3-1",
+    preferredFormation:
+      (data?.preferredFormation as Me["preferredFormation"]) ?? "4-2-3-1",
     positionLevels:
       data?.positionLevels && typeof data.positionLevels === "object"
         ? data.positionLevels
@@ -52,7 +50,6 @@ function normalizeMe(data: any): Me {
     createdAt: data?.createdAt ?? null,
     updatedAt: data?.updatedAt ?? null,
   };
-  return out;
 }
 
 export function useMe() {
@@ -61,18 +58,36 @@ export function useMe() {
   const [error, setError] = React.useState<string | null>(null);
 
   const refresh = React.useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      // Token yokken istek atmayalım → 401 log'ları olmaz
+      setMe(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const r = await fetch(`${API_URL}/users/me`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: { ...authHeader() },
         cache: "no-store",
       });
-      if (!r.ok) throw new Error(`status ${r.status}`);
-      const json = await r.json();
+
+      if (r.status === 401) {
+        // Oturum düşmüş: sessiz sıfırla
+        setMe(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(json?.message || `status ${r.status}`);
       setMe(normalizeMe(json));
-    } catch (e) {
-      setError("Profil alınamadı");
+    } catch (e: any) {
+      setError(e?.message || "Profil alınamadı");
       setMe(null);
     } finally {
       setLoading(false);
@@ -83,20 +98,19 @@ export function useMe() {
     refresh();
   }, [refresh]);
 
-  async function save(partial: any) {
+  async function save(partial: Partial<Me>) {
+    const token = getToken();
+    if (!token) throw new Error("Giriş gerekli");
+
     const r = await fetch(`${API_URL}/users/me`, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${getToken()}`,
-      },
+      headers: { "Content-Type": "application/json", ...authHeader() },
       body: JSON.stringify(partial),
     });
-    if (!r.ok) {
-      const t = await r.text();
-      throw new Error(`Kaydetme başarısız: ${r.status} ${t}`);
-    }
-    const json = await r.json();
+
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(json?.message || `Kaydetme başarısız: ${r.status}`);
+
     const normalized = normalizeMe(json);
     setMe(normalized);
     return normalized;

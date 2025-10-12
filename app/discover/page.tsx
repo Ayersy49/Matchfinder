@@ -4,21 +4,11 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { authHeader } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-
-function getToken() {
-  try {
-    return (
-      localStorage.getItem('token') ||
-      localStorage.getItem('access_token') ||
-      localStorage.getItem('jwt') ||
-      ''
-    );
-  } catch {
-    return '';
-  }
-}
+const DISCOVER_ENDPOINT = '/users/discover';
+const LS_DISCOVER = 'mf:discoverable';
 
 type Player = {
   id: string;
@@ -31,66 +21,57 @@ type Player = {
 };
 
 export default function DiscoverPage() {
-  // URL’den matchId oku (opsiyonel)
   const params = useSearchParams();
   const presetMatchId = params.get('matchId') ?? undefined;
 
   const [lat, setLat] = React.useState<number | null>(null);
   const [lng, setLng] = React.useState<number | null>(null);
-  const [radius, setRadius] = React.useState(10);
+  const [radius, setRadius] = React.useState<number>(30); // 5 yerine 30
   const [loading, setLoading] = React.useState(false);
   const [items, setItems] = React.useState<Player[]>([]);
-  const [discoverable, setDiscoverable] = React.useState(true);
-  const [level, setLevel] = React.useState<number | ''>('');   // 1..10 veya boş
-  const POSITIONS = ['GK','LB','CB','RB','DM','CM','AM','LW','RW','ST'] as const;
-  const [selectedPositions, setSelectedPositions] = React.useState<string[]>([]);
+  const [discoverable, setDiscoverable] = React.useState<boolean>(true);
 
-  async function toggleDiscoverable() {
-    try {
-      const r = await fetch(`${API_URL}/me/discoverable`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}`,
-        },
-        body: JSON.stringify({ value: !discoverable }), // <-- burada !discoverable
-      });
-      if (!r.ok) {
-        const t = await r.text().catch(() => '');
-        console.error('discoverable error', r.status, t);
-        throw new Error();
-      }
-      setDiscoverable(v => !v); // lokal state’i çevir
-    } catch {
-      alert('Keşifte görünürlük güncellenemedi.');
-    }
-  }
-  // Konumu al ve sunucuya yaz
+  // --- discoverable'ı kalıcı yap: önce localStorage, sonra sunucu ile eşitle ---
   React.useEffect(() => {
+    // 1) localStorage
+    try {
+      const raw = localStorage.getItem(LS_DISCOVER);
+      if (raw === 'true' || raw === 'false') setDiscoverable(raw === 'true');
+    } catch {}
+
+    // 2) sunucudan da varsa oku (me objesi discoverable döndürmüyorsa bu blok sessizce geçer)
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/users/me`, { headers: { ...authHeader() }, cache: 'no-store' });
+        if (!r.ok) return;
+        const me = await r.json().catch(() => ({}));
+        if (typeof me?.discoverable === 'boolean') {
+          setDiscoverable(me.discoverable);
+          try { localStorage.setItem(LS_DISCOVER, String(me.discoverable)); } catch {}
+        }
+        if (typeof me?.lat === 'number') setLat(me.lat);
+        if (typeof me?.lng === 'number') setLng(me.lng);
+      } catch {}
+    })();
+  }, []);
+
+  // --- konumu al ve sadece konumu güncelle (discoverable'a dokunma) ---
+  React.useEffect(() => {
+    if (!navigator.geolocation) return;
+
     navigator.geolocation.getCurrentPosition(
-      async pos => {
+      async (pos) => {
         const la = pos.coords.latitude;
         const ln = pos.coords.longitude;
         setLat(la);
         setLng(ln);
+
         try {
-          await fetch(`${API_URL}/me/location`, {
+          await fetch(`${API_URL}/users/me/location`, {
             method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${getToken()}`,
-            },
+            headers: { 'Content-Type': 'application/json', ...authHeader() },
             body: JSON.stringify({ lat: la, lng: ln }),
           });
-          await fetch(`${API_URL}/me/discoverable`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${getToken()}`,
-            },
-            body: JSON.stringify({ value: true }),
-          });
-          setDiscoverable(true);
         } catch {}
       },
       () => {},
@@ -98,23 +79,50 @@ export default function DiscoverPage() {
     );
   }, []);
 
+  // --- Keşifte görünürlük toggle ---
+  async function toggleDiscoverable() {
+    const next = !discoverable;
+    try {
+      const r = await fetch(`${API_URL}/users/me/discoverable`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ value: next }),
+      });
+      if (!r.ok) {
+        const t = await r.text().catch(() => '');
+        console.error('discoverable error', r.status, t);
+        throw new Error();
+      }
+      setDiscoverable(next);
+      try { localStorage.setItem(LS_DISCOVER, String(next)); } catch {}
+    } catch {
+      alert('Keşifte görünürlük güncellenemedi.');
+    }
+  }
+
+  // --- Listeyi yükle ---
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams();
+      // lat/lng yoksa göndermiyoruz; backend me.lat/lng ile fallback yapabilir
       if (lat != null && lng != null) {
         qs.set('lat', String(lat));
         qs.set('lng', String(lng));
       }
       qs.set('radiusKm', String(radius));
-      if (level !== '') qs.set('level', String(level));
-      if (selectedPositions.length) qs.set('positions', selectedPositions.join(','));
-  
-      const r = await fetch(`${API_URL}/players/discover?${qs}`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+
+      const r = await fetch(`${API_URL}${DISCOVER_ENDPOINT}?${qs.toString()}`, {
+        headers: { ...authHeader() },
         cache: 'no-store',
       });
-      const data = await r.json();
+      if (!r.ok) {
+        const t = await r.text().catch(() => '');
+        console.error('discover fetch error', r.status, t);
+        setItems([]);
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
       setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (e) {
       console.error(e);
@@ -128,21 +136,17 @@ export default function DiscoverPage() {
     load();
   }, [load]);
 
-  // Davet: URL’de matchId varsa prompt sormaz
+  // --- Maça davet ---
   async function inviteToMatch(userId: string) {
     const matchId =
-      presetMatchId ??
-      window.prompt("Hangi maçın id’sine davet edeceksin? (Match detail üstündeki ID)");
+      presetMatchId ?? window.prompt("Hangi maçın id’sine davet edeceksin? (Match detail üstündeki ID)");
     if (!matchId) return;
 
     const note = window.prompt('Not (opsiyonel)');
     try {
       const r = await fetch(`${API_URL}/matches/${matchId}/invites`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}`,
-        },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ toUserId: userId, message: note || undefined }),
       });
       const data = await r.json().catch(() => ({}));
@@ -154,7 +158,7 @@ export default function DiscoverPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-4">
+    <div className="mx-auto max-w-4xl space-y-4 p-4 text-white">
       {/* Üst bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -165,11 +169,6 @@ export default function DiscoverPage() {
             ← Ana menü
           </Link>
           <h1 className="text-xl font-semibold">Yakındaki oyuncular</h1>
-          {presetMatchId && (
-            <span className="text-xs text-neutral-400">
-              (Davetler <span className="font-mono">{presetMatchId}</span> için)
-            </span>
-          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -190,7 +189,7 @@ export default function DiscoverPage() {
           <label className="text-sm opacity-80">Yarıçap</label>
           <select
             value={radius}
-            onChange={e => setRadius(Number(e.target.value))}
+            onChange={(e) => setRadius(Number(e.target.value))}
             className="rounded-md border border-white/10 bg-neutral-800 px-2 py-1 text-sm"
           >
             <option value={5}>5 km</option>
@@ -216,7 +215,7 @@ export default function DiscoverPage() {
         <div className="text-sm text-neutral-400">Yakında uygun oyuncu bulunamadı.</div>
       ) : (
         <div className="space-y-2">
-          {items.map(p => (
+          {items.map((p) => (
             <div
               key={p.id}
               className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-neutral-900 p-3"
