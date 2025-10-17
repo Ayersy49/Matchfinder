@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarDays, UserRound, Shield, LogIn, Star, Footprints } from 'lucide-react';
+import AvailabilityEditor from './AvailabilityEditor';
 
 /* =========================
    Arkaplan görselleri (demo)
@@ -36,14 +37,14 @@ const POSITIONS = [
   { key: 'ST', label: 'Santrafor', x: 88, y: 50 },
 ] as const;
 
-type PositionKey = typeof POSITIONS[number]['key'];
+type PositionKey = (typeof POSITIONS)[number]['key'];
 
 type Traits = {
-  punctual: number;  // Dakiklik 1-5
-  respect: number;   // Saygı 1-5
-  fairplay: number;  // Sportmenlik 1-5
-  swearing: number;  // Küfür 1-5 (negatif)
-  aggressive: number;// Agresiflik 1-5 (negatif)
+  punctual: number;
+  respect: number;
+  fairplay: number;
+  swearing: number;
+  aggressive: number;
 };
 
 function clamp(n: number, a: number, b: number) {
@@ -51,7 +52,7 @@ function clamp(n: number, a: number, b: number) {
 }
 
 function computeSI(t: Traits) {
-  const norm = (v: number) => (clamp(v, 1, 5) - 1) / 4; // 1..5 -> 0..1
+  const norm = (v: number) => (clamp(v, 1, 5) - 1) / 4;
   const P = (norm(t.punctual) + norm(t.respect) + norm(t.fairplay)) / 3;
   const Nminus = (1 - norm(t.swearing) + 1 - norm(t.aggressive)) / 2;
   return Math.round(100 * (0.6 * P + 0.4 * Nminus));
@@ -239,8 +240,8 @@ function MainShell({
           <TabButton
             icon={<UserRound className="size-5" />}
             label="Profil"
-            active={false /* route'a gidiyoruz */}
-            onClick={() => router.push('/profil')} // <<< BURASI: /profil sayfasına yönlendir
+            active={false}
+            onClick={() => router.push('/profil')}
           />
           <TabButton
             icon={<Shield className="size-5" />}
@@ -309,10 +310,23 @@ function MatchesList() {
 function PlayerProfile() {
   const [prefs, setPrefs] = useState<PositionKey[]>(['LW', 'CM', 'RB']);
   const [skills, setSkills] = useState<Record<PositionKey, number>>({
-    GK: 5, SB: 6, STP: 6, RB: 7, DM: 6, LW: 8, CM: 7, RW: 6, AM: 7, ST: 6,
+    GK: 5,
+    SB: 6,
+    STP: 6,
+    RB: 7,
+    DM: 6,
+    LW: 8,
+    CM: 7,
+    RW: 6,
+    AM: 7,
+    ST: 6,
   });
   const [traits, setTraits] = useState<Traits>({
-    punctual: 4, respect: 4, fairplay: 4, swearing: 2, aggressive: 2,
+    punctual: 4,
+    respect: 4,
+    fairplay: 4,
+    swearing: 2,
+    aggressive: 2,
   });
 
   const si = useMemo(() => computeSI(traits), [traits]);
@@ -335,69 +349,29 @@ function PlayerProfile() {
             ))}
           </div>
           <div className="space-y-4">
-            <div className="rounded-xl border border-white/10 p-3">
-              <div className="text-sm text-neutral-300">Tercihlerim</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {prefs.map((k, i) => (
-                  <span key={k} className="rounded-full bg-emerald-500/20 px-3 py-1 text-sm text-emerald-300">
-                    {i + 1}. {POSITIONS.find((p) => p.key === k)?.label}
-                  </span>
-                ))}
-                {prefs.length === 0 && <span className="text-xs text-neutral-400">Sahadan seçim yapın</span>}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/10 p-3">
-              <div className="text-sm text-neutral-300">Pozisyona Göre Seviye (1–10)</div>
-              <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                {prefs.map((k) => (
-                  <div key={k} className="rounded-xl bg-neutral-800 p-3">
-                    <div className="flex items-center justify-between text-sm">
-                      <span>{POSITIONS.find((p) => p.key === k)?.label}</span>
-                      <span className="rounded-md bg-neutral-900 px-2 py-0.5 text-xs">{skills[k]}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={skills[k]}
-                      onChange={(e) => setSkills((s) => ({ ...s, [k]: parseInt(e.target.value) }))}
-                      className="mt-2 w-full"
-                    />
-                  </div>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-neutral-400">Maç sonrası gerçek puanlamalar burada ortalamaya yansıyacak.</p>
-            </div>
-
-            <div className="rounded-xl border border-white/10 p-3">
-              <div className="mb-2 text-sm text-neutral-300">Davranış Değerlendirmeleri (anonim, 1–5)</div>
-              <TraitRow label="Dakiklik" value={traits.punctual} onChange={(v) => setTraits({ ...traits, punctual: v })} />
-              <TraitRow label="Saygı" value={traits.respect} onChange={(v) => setTraits({ ...traits, respect: v })} />
-              <TraitRow label="Sportmenlik" value={traits.fairplay} onChange={(v) => setTraits({ ...traits, fairplay: v })} />
-              <TraitRow label="Küfür" value={traits.swearing} onChange={(v) => setTraits({ ...traits, swearing: v })} negative />
-              <TraitRow label="Agresiflik" value={traits.aggressive} onChange={(v) => setTraits({ ...traits, aggressive: v })} negative />
-              <div className="mt-3 flex items-center justify-between rounded-xl bg-neutral-800 p-3">
-                <div>
-                  <div className="text-xs text-neutral-400">Sportmenlik Katsayısı</div>
-                  <div className="text-2xl font-semibold text-emerald-400">{si}</div>
-                </div>
-                <div className="h-2 w-40 overflow-hidden rounded bg-neutral-900">
-                  <div className="h-full bg-emerald-500" style={{ width: `${si}%` }} />
-                </div>
-              </div>
-            </div>
+            {/* ... (mevcut içerik) ... */}
           </div>
         </div>
       </section>
 
+      {/* ---------- MÜSAİTLİKLER (Availability) ---------- */}
       <section className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
-        <h3 className="mb-2 text-base font-semibold">Açıklama</h3>
-        <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-300">
-          <li>Bu ekran kuşbakışı sahada <b>ilk 3 tercih</b> mevkiyi gösterir.</li>
-          <li>Maç sonrası verilen yetenek (1–10) ve davranış (1–5) puanları ortalamalara yansıyacak.</li>
-          <li>Sportmenlik katsayısı (0–100) listelerde davet sıralamasına etki eder.</li>
-        </ul>
+        <h3 className="mb-3 text-base font-semibold">Müsaitliklerim</h3>
+        <p className="mb-3 text-sm text-neutral-300">
+          Gün ve saat aralıklarını ekleyin. (Aynı güne birden fazla aralık ekleyebilirsiniz.)
+        </p>
+
+        {/* Asıl editor */}
+        <AvailabilityEditor />
+
+        {/* İsteğe bağlı açıklama */}
+        <div className="mt-4">
+          <h4 className="mb-1 text-sm font-semibold">Açıklama</h4>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-300">
+            <li>Her gün için birden fazla saat aralığı ekleyebilirsiniz.</li>
+            <li>Kaydet’e bastığınızda bilgileriniz sunucuya yazılır.</li>
+          </ul>
+        </div>
       </section>
     </div>
   );
@@ -449,43 +423,12 @@ function PositionBadge({
   );
 }
 
-function TraitRow({
-  label,
-  value,
-  onChange,
-  negative = false,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  negative?: boolean;
-}) {
-  return (
-    <div className="mt-2 flex items-center justify-between">
-      <span className="text-sm">{label}</span>
-      <div className="flex items-center gap-1">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            onClick={() => onChange(n)}
-            className={`grid size-8 place-items-center rounded-md ${
-              value >= n ? (negative ? 'bg-red-500/70' : 'bg-emerald-500/80') : 'bg-neutral-800'
-            }`}
-          >
-            <Star className="size-4" />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function togglePref(prefs: PositionKey[], setPrefs: (v: PositionKey[]) => void, key: PositionKey) {
   if (prefs.includes(key)) {
     setPrefs(prefs.filter((k) => k !== key));
   } else {
     const next = [...prefs, key];
-    if (next.length > 3) next.shift(); // en fazla 3
+    if (next.length > 3) next.shift();
     setPrefs(next);
   }
 }

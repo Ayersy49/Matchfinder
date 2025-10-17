@@ -274,12 +274,12 @@ export default function FriendsPage() {
                   >
                     <div>{nameOf(other)}</div>
                     <div className="flex gap-2">
-                      <a
-                        href={`/user/${other.id}`}
+                      <Link
+                        href={`/player/${other.id}`}
                         className="rounded bg-neutral-700 px-2 py-1 text-xs hover:bg-neutral-600"
                       >
                         Profili Gör
-                      </a>
+                      </Link>
                       <button
                         onClick={() => unfriend(other.id)}
                         className="rounded bg-rose-700 px-2 py-1 text-xs hover:bg-rose-600"

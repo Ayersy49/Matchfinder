@@ -1,54 +1,377 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, UserRound, Shield, LogIn, Star, Footprints } from "lucide-react";
+import { CalendarDays, UserRound, Shield, LogIn, Footprints, Star as IconStar } from "lucide-react";
 import { useMe } from "@/lib/useMe";
 import Link from "next/link";
 import { authHeader, clearToken, getToken, setToken } from "@/lib/auth";
-import { usePathname } from "next/navigation";
+import AvailabilityEditor from "../profil/AvailabilityEditor";
 
-// API kökü
+// API kökü + header helper
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+const H = (): HeadersInit => (authHeader() as unknown as HeadersInit);
 
-/* ------------------ Üst Bar: Davetler/Arkadaşlar butonu ------------------ */
-function InvitesBell() {
+/* =================== Rating Pending Bell + Modal =================== */
+
+function RateStar({filled=false,onClick}:{filled?:boolean;onClick?:()=>void}) {
   return (
-    <Link
-      href="/friends"                      // ← /invites yerine /friends
-      className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-      title="Davetler / Arkadaşlar"
-    >
-      Davetler
-      {/* Badge eklemek istersen:
-      <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">1</span>
-      */}
-    </Link>
+    <span onClick={onClick} className={`cursor-pointer ${filled?'text-emerald-400':'text-zinc-500'}`}>★</span>
+  );
+}
+function TraitStars({value,set}:{value:number,set:(n:number)=>void}) {
+  return (
+    <div className="flex items-center gap-1">
+      {[1,2,3,4,5].map(n=>(
+        <RateStar key={n} filled={value>=n} onClick={()=>set(n)} />
+      ))}
+    </div>
   );
 }
 
-// app/landing/page.tsx içinde, InvitesBell yanına ekleyin
-function FriendsBell() {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-  const [count, setCount] = React.useState(0);
 
-  async function load() {
+/* ---------- yardımcı: trait label'ları ---------- */
+function labelFor(
+  k: "punctuality" | "respect" | "sportsmanship" | "swearing" | "aggression"
+) {
+  return (
+    {
+      punctuality: "Dakiklik",
+      respect: "Saygı",
+      sportsmanship: "Sportmenlik",
+      swearing: "Küfür",
+      aggression: "Agresiflik",
+    } as const
+  )[k];
+}
+
+/* =========================================================
+   Maç Değerlendirme Modalı (davranış 1–5, mevki skoru 1–10)
+   Beklenen BE endpoint: POST /ratings/:matchId/submit-bulk
+   Payload:
+   {
+     ratings:    [{ rateeId, traits:{punctuality..} }],
+     posRatings: [{ rateeId, pos, score }]   // score: 1..10
+   }
+   match.players -> [{ id, phone, pos? }]
+   ========================================================= */
+function RateMatchModal({
+  open,
+  onClose,
+  match,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  match: any;
+  onSaved?: () => void;
+}) {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const [rows, setRows] = React.useState<
+    Array<{
+      userId: string;
+      phone?: string | null;
+      pos?: string | null; // BE pending cevabında varsa gelir
+      traits: {
+        punctuality: number;
+        respect: number;
+        sportsmanship: number;
+        swearing: number;
+        aggression: number;
+      };
+      posScore: number; // 1..10 (mevki performansı)
+    }>
+  >([]);
+  const [saving, setSaving] = React.useState(false);
+
+  // Modal açıldığında satırları hazırla
+  React.useEffect(() => {
+    if (!open || !match) return;
+    const list = Array.isArray(match?.players) ? match.players : [];
+    setRows(
+      list.map((p: any) => ({
+        userId: String(p.id),
+        phone: p.phone ?? null,
+        pos: p.pos ?? null, // varsa gösteririz
+        traits: {
+          punctuality: 3,
+          respect: 3,
+          sportsmanship: 3,
+          swearing: 3,
+          aggression: 3,
+        },
+        posScore: 7, // 1..10 başlangıç
+      }))
+    );
+  }, [open, match]);
+
+  // Kaydet
+  async function save() {
     try {
-      const r = await fetch(`${API_URL}/friends/requests/incoming?status=PENDING`, {
+      setSaving(true);
+
+      // 1) Davranış puanları (1..5)
+      const ratings = rows.map((r) => ({
+        rateeId: r.userId,
+        traits: r.traits,
+      }));
+
+      // 2) Mevki puanları (1..10) — yalnızca pos varsa gönder
+      const posRatings = rows
+        .filter((r) => r.pos && Number.isFinite(r.posScore))
+        .map((r) => ({
+          rateeId: r.userId,
+          pos: String(r.pos),
+          score: Math.max(1, Math.min(10, Math.round(Number(r.posScore)))),
+        }));
+
+      const endpoint = `${API_URL}/ratings/${match.matchId}/submit-bulk`;
+      const r = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(H() as any) },
+        body: JSON.stringify({ ratings, posRatings }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok !== true) throw new Error(j?.message || "Kaydedilemedi");
+
+      onClose();
+      onSaved?.();
+      alert("Teşekkürler! Değerlendirmelerin kaydedildi.");
+    } catch (e: any) {
+      alert(e?.message || "Hata");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open || !match) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
+      <div className="w-full max-w-3xl rounded-2xl bg-neutral-900 p-4 ring-1 ring-white/10">
+        <div className="mb-2 text-base font-semibold">
+          Oyuncuları değerlendir — {match.title ?? "Maç"}
+        </div>
+
+        <div className="max-h-[60vh] overflow-auto">
+          {rows.map((row, idx) => (
+            <div
+              key={row.userId}
+              className="flex items-center justify-between gap-3 border-b border-white/5 py-2"
+            >
+              {/* Sol: kimlik + varsa pozisyon etiketi */}
+              <div className="flex min-w-[160px] items-center gap-2 text-sm">
+                <span className="truncate">{row.phone ?? row.userId.slice(0, 6)}</span>
+                {row.pos && (
+                  <span className="rounded-md bg-neutral-800 px-2 py-0.5 text-xs">
+                    {row.pos}
+                  </span>
+                )}
+              </div>
+
+              {/* Orta: 5 trait yıldızı */}
+              <div className="grid flex-1 grid-cols-5 items-center gap-4 text-xs">
+                {(
+                  [
+                    "punctuality",
+                    "respect",
+                    "sportsmanship",
+                    "swearing",
+                    "aggression",
+                  ] as const
+                ).map((k) => (
+                  <div key={k} className="flex items-center gap-2">
+                    <span className="w-24">{labelFor(k)}</span>
+                    <TraitStars
+                      value={row.traits[k]}
+                      set={(n: number) =>
+                        setRows((rs) => {
+                          const cp = [...rs];
+                          cp[idx] = {
+                            ...cp[idx],
+                            traits: { ...cp[idx].traits, [k]: n },
+                          };
+                          return cp;
+                        })
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Sağ: mevki performansı 1..10 (pos varsa göster) */}
+              <div className="flex min-w-[210px] items-center gap-2">
+                {row.pos ? (
+                  <>
+                    <span className="w-24 text-xs">Oyun (1–10)</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={row.posScore}
+                      onChange={(e) =>
+                        setRows((rs) => {
+                          const cp = [...rs];
+                          cp[idx] = { ...cp[idx], posScore: Number(e.target.value) };
+                          return cp;
+                        })
+                      }
+                      className="w-36"
+                    />
+                    <span className="w-5 text-right text-xs">{row.posScore}</span>
+                  </>
+                ) : (
+                  <span className="text-[11px] text-neutral-500">
+                    Pozisyon bilgisi yok
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+          >
+            Vazgeç
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 disabled:opacity-50"
+          >
+            {saving ? "Kaydediliyor…" : "Kaydet"}
+          </button>
+        </div>
+
+        <div className="mt-2 text-[11px] text-neutral-400">
+          Not: Değerlendirmeler anonimdir. 24 saat içinde en fazla 3 kez güncelleyebilirsin.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Üst bar’daki “Değerlendir (N)” zili
+   Beklenen BE endpoint:
+   GET /ratings/pending  -> { items:[{ matchId, title, players:[{id,phone,pos?}], ...}] }
+   ========================================================= */
+function PendingRatingsBell() {
+  const [items, setItems] = React.useState<any[]>([]);
+  const [open, setOpen] = React.useState(false);
+  const [payload, setPayload] = React.useState<any | null>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/ratings/pending`, {
         headers: { ...authHeader() },
         cache: "no-store",
       });
-      if (r.status === 401) return; // login akışı zaten sizde var
+      const j = await r.json().catch(() => ({}));
+      setItems(Array.isArray(j?.items) ? j.items : []);
+    } catch {}
+  }, [API_URL]);
+
+  React.useEffect(() => {
+    load();
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  return (
+    <>
+      <button
+        onClick={() => {
+          if (items[0]) {
+            setPayload(items[0]);
+            setOpen(true);
+          }
+        }}
+        className={`rounded-lg px-3 py-1.5 text-sm ${
+          items.length
+            ? "bg-amber-600/90 hover:bg-amber-600"
+            : "bg-neutral-800 text-neutral-300"
+        }`}
+        title="Değerlendirme bekliyor"
+      >
+        Değerlendir ({items.length})
+      </button>
+
+      <RateMatchModal
+        open={open}
+        onClose={() => setOpen(false)}
+        match={payload}
+        onSaved={load}
+      />
+    </>
+  );
+}
+
+
+/* ------------------ Üst Bar: Davetler (badge) ------------------ */
+function InvitesBell() {
+  const [count, setCount] = React.useState(0);
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/matches/invites/inbox?status=PENDING`, {
+        headers: H(),
+        cache: "no-store",
+      });
+      if (!r.ok) return;
       const data = await r.json().catch(() => ({}));
       const n = Array.isArray(data?.items) ? data.items.length : 0;
       setCount(n);
     } catch {}
-  }
+  }, []);
 
   React.useEffect(() => {
     load();
     const t = setInterval(load, 5000); // 5 sn’de bir tazele
     return () => clearInterval(t);
+  }, [load]);
+
+  return (
+    <Link
+      href="/invites"
+      className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+      title="Davetler"
+    >
+      Davetler
+      {count > 0 && (
+        <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+          {count}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/* ------------------ Üst Bar: Arkadaşlar (badge) ------------------ */
+function FriendsBell() {
+  const [count, setCount] = React.useState(0);
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/friends/requests/incoming?status=PENDING`, {
+        headers: H(),
+        cache: "no-store",
+      });
+      if (!r.ok) return;
+      const data = await r.json().catch(() => ({}));
+      const n = Array.isArray(data?.items) ? data.items.length : 0;
+      setCount(n);
+    } catch {}
   }, []);
+
+  React.useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
 
   return (
     <Link
@@ -66,7 +389,6 @@ function FriendsBell() {
   );
 }
 
-
 /* ---------------------- Tipler ---------------------- */
 type MatchLite = {
   id: string;
@@ -77,174 +399,74 @@ type MatchLite = {
   price?: number | null;
   time?: string | null;
   createdAt?: string;
+  slots?: SlotLite[] | null;
 };
 
 type SlotLite = { pos: string; userId?: string | null };
 
-function missingOf(m: any): string[] {
-  return Array.isArray(m?.slots)
-    ? (m.slots as SlotLite[]).filter((s) => !s.userId).map((s) => s.pos)
-    : [];
-}
-
 const LEVELS = ["Kolay", "Orta", "Zor"] as const;
-const FORMATS = ["5v5", "7v7", "8v8", "11v11"] as const;
-
-// Arkaplan görselleri
-const STADIUMS = [
-  "https://images.unsplash.com/photo-1530541930197-ff16ac917b0e?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1486286701208-1d58e9338013?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1522770179533-24471fcdba45?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1522771930-78848d9293e8?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1471295253337-3ceaaedca402?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1547347298-4074fc3086f0?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1486286701208-1d58e9338013?q=80&w=1600&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?q=80&w=1600&auto=format&fit=crop",
-];
-
-// Saha üstü etiketler (Oyuncu sekmesi için)
-const POSITIONS = [
-  { key: "GK", label: "Kaleci", x: 5, y: 50 },
-  { key: "SB", label: "Sol Bek", x: 20, y: 20 },
-  { key: "STP", label: "Stoper", x: 20, y: 50 },
-  { key: "RB", label: "Sağ Bek", x: 20, y: 80 },
-  { key: "DM", label: "Ön Libero", x: 40, y: 50 },
-  { key: "LW", label: "Sol Kanat", x: 55, y: 20 },
-  { key: "CM", label: "Merkez", x: 55, y: 50 },
-  { key: "RW", label: "Sağ Kanat", x: 55, y: 80 },
-  { key: "AM", label: "10 Numara", x: 72, y: 50 },
-  { key: "ST", label: "Santrafor", x: 88, y: 50 },
-] as const;
-
-// Günler ve etiketleri
-const DAYS = [
-  { key: "mon", label: "Pzt" },
-  { key: "tue", label: "Sal" },
-  { key: "wed", label: "Çar" },
-  { key: "thu", label: "Per" },
-  { key: "fri", label: "Cum" },
-  { key: "sat", label: "Cmt" },
-  { key: "sun", label: "Paz" },
-];
-
-function normalizeAvailability(raw: any): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const d of DAYS) {
-    const v = raw?.[d.key];
-    if (Array.isArray(v)) out[d.key] = v;
-    else if (v === true) out[d.key] = ["20:00-24:00"];
-    else out[d.key] = Array.isArray(v) ? v : (typeof v === "string" && v ? [v] : []);
-  }
-  return out;
-}
-
-function AvailabilityPicker({
-  value,
-  onChange,
-}: {
-  value: Record<string, string[]>;
-  onChange: (v: Record<string, string[]>) => void;
-}) {
-  const val = normalizeAvailability(value);
-
-  function toggleDay(k: string) {
-    const next = { ...val };
-    next[k] = next[k]?.length ? [] : ["20:00-24:00"];
-    onChange(next);
-  }
-
-  return (
-    <div className="mt-4 rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
-      <div className="mb-2 text-base font-semibold">Müsaitlik</div>
-      <div className="grid gap-3 md:grid-cols-3">
-        {DAYS.map((d) => {
-          const active = !!val[d.key]?.length;
-          return (
-            <button
-              key={d.key}
-              type="button"
-              onClick={() => toggleDay(d.key)}
-              className={`w-full rounded-xl px-4 py-3 text-sm ${
-                active ? "bg-emerald-600 text-neutral-950" : "bg-neutral-800 hover:bg-neutral-700"
-              }`}
-            >
-              {d.label} {active ? "20:00–24:00" : "—"}
-            </button>
-          );
-        })}
-      </div>
-      <div className="mt-2 text-xs text-neutral-400">(MVP: her gün için tek slot; sonraki iterasyonda esnek saat aralıkları eklenecek)</div>
-    </div>
-  );
-}
+const FORMATS = ["5v5", "6v6", "7v7", "8v8", "9v9", "10v10", "11v11"] as const;
 
 /* ---------------------- Dizilişler ---------------------- */
 type PositionKey =
-  | "GK" | "LB" | "CB" | "RB" | "LWB" | "RWB"
-  | "DM" | "CM" | "AM" | "LW" | "RW" | "ST"
-  | "SB" | "STP";
+  | "GK"
+  | "LB"
+  | "CB"
+  | "RB"
+  | "LWB"
+  | "RWB"
+  | "DM"
+  | "CM"
+  | "AM"
+  | "LW"
+  | "RW"
+  | "ST"
+  | "SB"
+  | "STP";
 
 type PitchSlot = { key: PositionKey; label: string; x: number; y: number };
 
 const FORMATIONS: Record<string, PitchSlot[]> = {
   "4-2-3-1": [
-    { key: "GK",  label: "Kaleci",      x: 6,  y: 50 },
-    { key: "LB",  label: "Sol Bek",     x: 20, y: 20 },
-    { key: "CB",  label: "Stoper",      x: 20, y: 42 },
-    { key: "STP", label: "Stoper",      x: 20, y: 58 },
-    { key: "RB",  label: "Sağ Bek",     x: 20, y: 80 },
-    { key: "DM",  label: "Ön Libero",   x: 40, y: 38 },
-    { key: "CM",  label: "Merkez",      x: 40, y: 62 },
-    { key: "LW",  label: "Sol Kanat",   x: 60, y: 20 },
-    { key: "AM",  label: "10 Numara",   x: 60, y: 50 },
-    { key: "RW",  label: "Sağ Kanat",   x: 60, y: 80 },
-    { key: "ST",  label: "Santrafor",   x: 84, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
+    { key: "LB", label: "Sol Bek", x: 20, y: 20 },
+    { key: "CB", label: "Stoper", x: 20, y: 42 },
+    { key: "STP", label: "Stoper", x: 20, y: 58 },
+    { key: "RB", label: "Sağ Bek", x: 20, y: 80 },
+    { key: "DM", label: "Ön Libero", x: 40, y: 38 },
+    { key: "CM", label: "Merkez", x: 40, y: 62 },
+    { key: "LW", label: "Sol Kanat", x: 60, y: 20 },
+    { key: "AM", label: "10 Numara", x: 60, y: 50 },
+    { key: "RW", label: "Sağ Kanat", x: 60, y: 80 },
+    { key: "ST", label: "Santrafor", x: 84, y: 50 },
   ],
   "4-3-3": [
-    { key: "GK",  label: "Kaleci",      x: 6,  y: 50 },
-    { key: "LB",  label: "Sol Bek",     x: 20, y: 20 },
-    { key: "CB",  label: "Stoper",      x: 20, y: 42 },
-    { key: "STP", label: "Stoper",      x: 20, y: 58 },
-    { key: "RB",  label: "Sağ Bek",     x: 20, y: 80 },
-    { key: "DM",  label: "Ön Libero",   x: 40, y: 50 },
-    { key: "CM",  label: "Merkez",      x: 52, y: 35 },
-    { key: "AM",  label: "İleri Orta",  x: 52, y: 65 },
-    { key: "LW",  label: "Sol Kanat",   x: 70, y: 20 },
-    { key: "ST",  label: "Santrafor",   x: 84, y: 50 },
-    { key: "RW",  label: "Sağ Kanat",   x: 70, y: 80 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
+    { key: "LB", label: "Sol Bek", x: 20, y: 20 },
+    { key: "CB", label: "Stoper", x: 20, y: 42 },
+    { key: "STP", label: "Stoper", x: 20, y: 58 },
+    { key: "RB", label: "Sağ Bek", x: 20, y: 80 },
+    { key: "DM", label: "Ön Libero", x: 40, y: 50 },
+    { key: "CM", label: "Merkez", x: 52, y: 35 },
+    { key: "AM", label: "İleri Orta", x: 52, y: 65 },
+    { key: "LW", label: "Sol Kanat", x: 70, y: 20 },
+    { key: "ST", label: "Santrafor", x: 84, y: 50 },
+    { key: "RW", label: "Sağ Kanat", x: 70, y: 80 },
   ],
   "3-5-2": [
-    { key: "GK",  label: "Kaleci", x: 8,  y: 50 },
-    { key: "CB",  label: "Stoper", x: 22, y: 32 },
-    { key: "CB",  label: "Stoper", x: 22, y: 50 },
-    { key: "CB",  label: "Stoper", x: 22, y: 68 },
-    { key: "DM",  label: "Ön Libero", x: 40, y: 42 },
-    { key: "DM",  label: "Ön Libero", x: 40, y: 58 },
-    { key: "AM",  label: "10 Numara", x: 58, y: 50 },
+    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "CB", label: "Stoper", x: 22, y: 32 },
+    { key: "CB", label: "Stoper", x: 22, y: 50 },
+    { key: "CB", label: "Stoper", x: 22, y: 68 },
+    { key: "DM", label: "Ön Libero", x: 40, y: 42 },
+    { key: "DM", label: "Ön Libero", x: 40, y: 58 },
+    { key: "AM", label: "10 Numara", x: 58, y: 50 },
     { key: "LWB", label: "LMB", x: 50, y: 20 },
     { key: "RWB", label: "RMB", x: 50, y: 80 },
-    { key: "ST",  label: "Santrafor", x: 86, y: 40 },
-    { key: "ST",  label: "Santrafor", x: 86, y: 60 },
+    { key: "ST", label: "Santrafor", x: 86, y: 40 },
+    { key: "ST", label: "Santrafor", x: 86, y: 60 },
   ],
 };
-
-type Traits = {
-  punctual: number;
-  respect: number;
-  fairplay: number;
-  swearing: number;   // negatif
-  aggressive: number; // negatif
-};
-
-const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
-function computeSI(t: Traits) {
-  const norm = (v: number) => (clamp(v, 1, 5) - 1) / 4; // 1..5 -> 0..1
-  const P = (norm(t.punctual) + norm(t.respect) + norm(t.fairplay)) / 3;
-  const Nminus = (1 - norm(t.swearing) + 1 - norm(t.aggressive)) / 2;
-  return Math.round(100 * (0.6 * P + 0.4 * Nminus));
-}
 
 /* ====================== Sayfa ====================== */
 export default function Page() {
@@ -268,9 +490,23 @@ export default function Page() {
     </div>
   );
 }
+
 /* ---------------------- Login ---------------------- */
 
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+  const STADIUMS = [
+    "https://images.unsplash.com/photo-1530541930197-ff16ac917b0e?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1486286701208-1d58e9338013?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1522770179533-24471fcdba45?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1522771930-78848d9293e8?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1471295253337-3ceaaedca402?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1547347298-4074fc3086f0?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1486286701208-1d58e9338013?q=80&w=1600&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?q=80&w=1600&auto=format&fit=crop",
+  ];
+
   const [idx, setIdx] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setIdx((i) => (i + 1) % STADIUMS.length), 4500);
@@ -306,21 +542,22 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phone: normalizePhone(phone),
-          code:  normalizeCode(code),
+          code: normalizeCode(code),
         }),
       });
       const data = await r.json();
 
       if (!data?.ok || !data?.accessToken) {
         const msg =
-          data?.reason === "OTP_expired"  ? "Kodun süresi doldu" :
-          data?.reason === "OTP_mismatch" ? "Kod hatalı" :
-          "Giriş başarısız";
+          data?.reason === "OTP_expired"
+            ? "Kodun süresi doldu"
+            : data?.reason === "OTP_mismatch"
+            ? "Kod hatalı"
+            : "Giriş başarısız";
         alert(msg);
         return;
       }
 
-      // <<< ESKİ localStorage.setItem(...) yerine sadece bu:
       setToken(data.accessToken);
       onSuccess();
     } catch {
@@ -352,9 +589,7 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
             <Footprints className="size-8" />
             <span>MatchFinder</span>
           </div>
-          <p className="mt-2 text-sm text-neutral-300">
-            Bölge + Pozisyon + Seviye ile maça katıl
-          </p>
+          <p className="mt-2 text-sm text-neutral-300">Bölge + Pozisyon + Seviye ile maça katıl</p>
         </div>
 
         <div className="w-full max-w-sm rounded-2xl bg-neutral-900/70 backdrop-blur p-5 shadow-xl ring-1 ring-white/10">
@@ -419,16 +654,11 @@ function MainShell({
     <div className="relative min-h-dvh pb-24">
       <header className="sticky top-0 z-20 flex items-center justify-between bg-neutral-950/80 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
         <div className="text-lg font-semibold">MatchFinder</div>
-        {/* >>> EKLENDİ: davet zili + mevcut yazı */}
         <div className="flex items-center gap-2">
-          <Link
-            href="/friends"
-            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-          >
-            Arkadaşlar
-          </Link>
+          <PendingRatingsBell />
+          <FriendsBell />
           <InvitesBell />
-        <div className="text-xs text-neutral-400">MVP Demo</div>
+          <div className="text-xs text-neutral-400">MVP Demo</div>
         </div>
       </header>
 
@@ -478,102 +708,27 @@ function TabButton({ icon, label, active, onClick }: any) {
   );
 }
 
-function CreateMatchForm({ onCreated }: { onCreated: (m: MatchLite) => void }) {
-  const [title, setTitle] = React.useState("");
-  const [location, setLocation] = React.useState("");
-  const [level, setLevel] = React.useState<typeof LEVELS[number]>("Orta");
-  const [format, setFormat] = React.useState<typeof FORMATS[number]>("7v7");
-  const [price, setPrice] = React.useState<number | "">("");
-  const [time, setTime] = React.useState<string>(""); // datetime-local
-  const [busy, setBusy] = React.useState(false);
+/* ------------------ Maçlar ekranı ------------------ */
 
-  async function submit() {
-    if (!title.trim()) return alert("Başlık zorunlu");
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_URL}/matches`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken()}`,
-        },
-        body: JSON.stringify({
-          title: title.trim(),
-          location: location.trim() || null,
-          level,
-          format,
-          price: price === "" ? null : Number(price),
-          time: time ? new Date(time).toISOString() : null,
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const created = (await res.json()) as MatchLite;
-      onCreated(created);
-      // formu sıfırla
-      setTitle(""); setLocation(""); setLevel("Orta"); setFormat("7v7"); setPrice(""); setTime("");
-    } catch (e: any) {
-      alert(`Oluşturma hatası: ${e?.message || e}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4 mb-6">
-      <div className="mb-2 font-semibold">Yeni Maç</div>
-      <div className="grid gap-2 md:grid-cols-2">
-        <input className="rounded bg-neutral-800 px-3 py-2"
-               placeholder="Başlık"
-               value={title} onChange={e=>setTitle(e.target.value)} />
-        <input className="rounded bg-neutral-800 px-3 py-2"
-               placeholder="Konum"
-               value={location} onChange={e=>setLocation(e.target.value)} />
-        <select className="rounded bg-neutral-800 px-3 py-2"
-                value={level} onChange={e=>setLevel(e.target.value as any)}>
-          {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
-        </select>
-        <select className="rounded bg-neutral-800 px-3 py-2"
-                value={format} onChange={e=>setFormat(e.target.value as any)}>
-          {FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
-        </select>
-        <input className="rounded bg-neutral-800 px-3 py-2"
-               type="number" placeholder="Fiyat (₺)"
-               value={price} onChange={e=>setPrice(e.target.value === "" ? "" : Number(e.target.value))} />
-        <input className="rounded bg-neutral-800 px-3 py-2"
-               type="datetime-local"
-               value={time} onChange={e=>setTime(e.target.value)} />
-      </div>
-      <div className="mt-3">
-        <button disabled={busy}
-                onClick={submit}
-                className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-emerald-400 disabled:opacity-50">
-          {busy ? "Oluşturuluyor…" : "Oluştur"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-
-
-
-//
-// Maç Ekranı
-// ---- Maçlar sekmesi: liste + filtre + hızlı katıl/ayrıl ----
-// ---- Maçlar sekmesi: liste + filtre + hızlı katıl/ayrıl ----
 function MatchesScreen() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
   const { me } = useMe();
   const meId = me?.id ?? null;
 
-  // Liste ve UI durumları
+  // Liste & UI
   const [items, setItems] = React.useState<MatchLite[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [joining, setJoining] = React.useState<string | null>(null); // ← burada TANIMLI
+  const [joining, setJoining] = React.useState<string | null>(null);
 
-  // Filtreler ("" = Hepsi)
+  // 🔸 Değerlendirme modal state (YENİ)
+  const [rateOpen, setRateOpen] = React.useState(false);
+  const [ratePayload, setRatePayload] = React.useState<any | null>(null);
+
+  // Filtreler
   const [level, setLevel] = React.useState<"" | "Kolay" | "Orta" | "Zor">("");
-  const [format, setFormat] = React.useState<"" | "5v5" | "7v7" | "8v8" | "11v11">("");
+  const [format, setFormat] = React.useState<
+    "" | "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11"
+  >("");
   const [hidePast, setHidePast] = React.useState(true);
 
   // Kullanıcının ilk 3 tercihi
@@ -598,7 +753,6 @@ function MatchesScreen() {
       setLoading(false);
     }
   }
-
   React.useEffect(() => {
     refresh();
   }, []);
@@ -620,20 +774,16 @@ function MatchesScreen() {
     window.location.href = "/";
   }
 
-  // Hızlı katıl: me tercihlerinden boş olanı auto seç, yoksa detaya gönder
+  // Hızlı katıl
   async function quickJoin(m: MatchLite) {
     setJoining(m.id);
-
     try {
-      // 0) Header
       const hdr = authHeader();
       if (!hdr.Authorization) {
         alert("Oturum gerekli. Lütfen giriş yapın.");
         window.location.href = "/";
         return;
       }
-
-      // 0.1) Katılmadan önce token gerçekten geçerli mi? (hızlı kontrol)
       const chk = await fetch(`${API_URL}/users/me`, { headers: { ...hdr }, cache: "no-store" });
       if (chk.status === 401) {
         clearToken();
@@ -642,7 +792,7 @@ function MatchesScreen() {
         return;
       }
 
-      // 1) Detaydan boş pozisyonları al
+      // detaydan boşları çek
       const rDet = await fetch(`${API_URL}/matches/${m.id}`, {
         cache: "no-store",
         headers: { ...hdr },
@@ -651,43 +801,31 @@ function MatchesScreen() {
       const slots: any[] = Array.isArray(det?.slots) ? det.slots : [];
       const missing: string[] = slots.filter((s: any) => !s.userId).map((s: any) => s.pos);
 
-      // 2) Tercihlerden ilk uygun olanı seç; hiçbiri uymuyorsa ilk boşu dene
-      const chosenPos =
-        (prefs ?? []).find((p) => missing.includes(p)) ?? (missing[0] ?? null);
-
-      // 3) Hiç boş yoksa (veya tercih yoksa) detaya yönlendir → kullanıcı slot seçsin
+      const chosenPos = (prefs ?? []).find((p) => missing.includes(p)) ?? (missing[0] ?? null);
       if (!chosenPos) {
         window.location.href = `/match/${m.id}?selectPosition=1`;
         return;
       }
 
-      // 4) Katıl çağrısı
       const r = await fetch(`${API_URL}/matches/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...hdr },
         body: JSON.stringify({ matchId: m.id, pos: chosenPos }),
       });
-
       if (r.status === 401) {
-        // Sunucu “Unauthorized” dedi → token’ı temizleyip login’e
         clearToken();
         alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
         window.location.href = "/";
         return;
       }
-
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data?.ok === false) {
-        console.debug("JOIN FAIL", r.status, data); // ← detay görebil
         alert(data?.message || "Katılım başarısız.");
-        window.location.href = `/match/${m.id}`; // yine de detaya geç
+        window.location.href = `/match/${m.id}`;
         return;
       }
-
-      // Başarılı → detaya
       window.location.href = `/match/${m.id}`;
     } catch (e: any) {
-      console.debug("JOIN EX", e);
       alert(e?.message || "Katılım sırasında hata.");
       window.location.href = `/match/${m.id}`;
     } finally {
@@ -695,7 +833,7 @@ function MatchesScreen() {
     }
   }
 
-  // Ayrıl (BACKEND: /matches/:id/leave)
+  // Ayrıl
   async function leave(m: MatchLite) {
     try {
       const hdr = authHeader();
@@ -704,32 +842,55 @@ function MatchesScreen() {
         window.location.href = "/";
         return;
       }
-
       const r = await fetch(`${API_URL}/matches/${m.id}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...hdr },
       });
-
       if (r.status === 401) {
         clearToken();
         alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
         window.location.href = "/";
         return;
       }
-
       const data = await r.json().catch(() => ({}));
-      if (!r.ok || data?.ok === false) {
-        console.debug("LEAVE FAIL", r.status, data);
-        throw new Error(data?.message || "Ayrılma başarısız");
-      }
-
+      if (!r.ok || data?.ok === false) throw new Error(data?.message || "Ayrılma başarısız");
       await refresh();
     } catch (e: any) {
       alert(e?.message || "Ayrılma başarısız");
     }
   }
 
-  // Filtrelenmiş liste ("" Hepsi demek)
+  // 🔸 Karttan “Değerlendir”i aç (YENİ)
+  async function openRateFor(match: MatchLite) {
+    try {
+      const hdr = authHeader();
+      const det = await fetch(`${API_URL}/matches/${match.id}`, {
+        headers: { ...hdr },
+        cache: "no-store",
+      }).then((r) => r.json());
+
+      const slots: any[] = Array.isArray(det?.slots) ? det.slots : [];
+
+      // uids'leri string[] olarak TİP GÜVENLİ topla
+      const uids: string[] = Array.from(
+        new Set(
+          slots
+            .map((s: any) => s?.userId)
+            .filter((u: any): u is string => typeof u === "string" && !!u && u !== meId)
+        )
+      );
+
+      // artık map parametresini 'string' kabul ediyor
+      const players = uids.map((id) => ({ id, phone: null as string | null }));
+
+      setRatePayload({ matchId: match.id, title: match.title, players });
+      setRateOpen(true);
+    } catch {
+      alert("Oyuncular yüklenemedi.");
+    }
+  }
+
+  // Filtrelenmiş liste
   const filtered = items.filter((m) => {
     if (hidePast && m.time) {
       try {
@@ -743,7 +904,7 @@ function MatchesScreen() {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      {/* Üst bar */}
+      {/* Üst bar filtreler */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Link
           href="/matches/new"
@@ -773,8 +934,11 @@ function MatchesScreen() {
           >
             <option value="">Hepsi</option>
             <option>5v5</option>
+            <option>6v6</option>
             <option>7v7</option>
             <option>8v8</option>
+            <option>9v9</option>
+            <option>10v10</option>
             <option>11v11</option>
           </select>
 
@@ -794,12 +958,12 @@ function MatchesScreen() {
             Yenile
           </button>
 
-          <Link
-            href="/discover"
-            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-          >
-            Keşfet
-          </Link>
+            <Link
+              href="/discover"
+              className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+            >
+              Keşfet
+            </Link>
 
           <button
             onClick={logout}
@@ -810,30 +974,44 @@ function MatchesScreen() {
         </div>
       </div>
 
-      {/* yükleme/boş */}
+      {/* içerik */}
       {loading && <div className="text-sm text-neutral-400">Yükleniyor…</div>}
       {!loading && !filtered.length && (
         <div className="text-sm text-neutral-400">Kayıt yok</div>
       )}
 
-      {/* kartlar */}
       <div className="space-y-3">
         {filtered.map((m) => {
           const mine = myPos(m);
           const miss = missingOf(m);
           const prefHit = prefs.find((p) => miss.includes(p));
 
+          // Doluluk
+          const slotsArr: any[] = Array.isArray((m as any)?.slots) ? (m as any).slots : [];
+          const total =
+            slotsArr.length ||
+            (typeof m.format === "string"
+              ? (() => {
+                  const n = parseInt(String(m.format).split("v")[0], 10);
+                  return Number.isFinite(n) ? n * 2 : 0;
+                })()
+              : 0);
+          const filled = slotsArr.filter((s) => s?.userId).length;
+          const pct = total ? Math.round((filled / total) * 100) : 0;
+          const isFull = total > 0 && filled >= total;
+
+          // 🔸 24 saat içinde mi? (YENİ)
+          const now = Date.now();
+          const t = m.time ? new Date(m.time).getTime() : 0;
+          const ended = t && t < now;
+          const within24h = ended && now - t <= 24 * 3600 * 1000;
+
           return (
-            <div
-              key={m.id}
-              className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4"
-            >
+            <div key={m.id} className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
               <div className="flex items-start justify-between gap-3">
                 {/* SOL */}
                 <div>
-                  <div className="text-base font-semibold">
-                    {m.title || "Maç"}
-                  </div>
+                  <div className="text-base font-semibold">{m.title || "Maç"}</div>
                   <div className="mt-1 text-xs text-neutral-300">
                     {m.location || "—"} • {m.level || "—"} • {m.format || "—"}
                     {m.time && (
@@ -848,16 +1026,27 @@ function MatchesScreen() {
                     )}
                   </div>
 
+                  {/* Doluluk */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1.5 w-40 overflow-hidden rounded bg-neutral-800">
+                      <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-xs text-neutral-300">
+                      {filled}/{total} ({pct}%)
+                    </span>
+                    {isFull && (
+                      <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[11px] text-rose-300 ring-1 ring-rose-500/30">
+                        Dolu
+                      </span>
+                    )}
+                  </div>
+
                   <div className="mt-1 text-xs">
                     {mine ? (
-                      <span className="text-emerald-400">
-                        Katıldın • Pozisyonun: {mine}
-                      </span>
+                      <span className="text-emerald-400">Katıldın • Pozisyonun: {mine}</span>
                     ) : miss.length ? (
                       prefHit ? (
-                        <span className="text-emerald-400">
-                          Eksik: {miss.join(", ")}
-                        </span>
+                        <span className="text-emerald-400">Eksik: {miss.join(", ")}</span>
                       ) : (
                         <span className="text-amber-400">
                           Tercih mevki yok • Detaydan seçebilirsiniz
@@ -873,11 +1062,12 @@ function MatchesScreen() {
                 <div className="flex items-center gap-2">
                   {!mine ? (
                     <button
-                      onClick={() => quickJoin(m)}        // ← DİKKAT: m GİDİYOR, m.id DEĞİL
-                      disabled={joining === m.id}
+                      onClick={() => quickJoin(m)}
+                      disabled={joining === m.id || isFull}
                       className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+                      title={isFull ? "Maç Dolu" : "Katıl"}
                     >
-                      {joining === m.id ? "Katılıyor…" : "Katıl"}
+                      {isFull ? "Dolu" : joining === m.id ? "Katılıyor…" : "Katıl"}
                     </button>
                   ) : (
                     <button
@@ -885,6 +1075,17 @@ function MatchesScreen() {
                       className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
                     >
                       Ayrıl
+                    </button>
+                  )}
+
+                  {/* 🔸 Karttan Değerlendir butonu (YENİ) */}
+                  {within24h && (
+                    <button
+                      onClick={() => openRateFor(m)}
+                      className="rounded-xl bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500"
+                      title="Bu maçı değerlendir"
+                    >
+                      Değerlendir
                     </button>
                   )}
 
@@ -900,10 +1101,20 @@ function MatchesScreen() {
           );
         })}
       </div>
+
+      {/* 🔸 Değerlendirme Modalı bağlama (YENİ) */}
+      <RateMatchModal
+        open={rateOpen}
+        onClose={() => setRateOpen(false)}
+        match={ratePayload}
+        onSaved={() => {
+          setRateOpen(false);
+          refresh();
+        }}
+      />
     </div>
   );
 }
-
 
 /* ---------------------- Profil ekranı ---------------------- */
 
@@ -914,55 +1125,46 @@ function ProfileScreen() {
   const [generalLevel, setGeneralLevel] = React.useState(5);
   const [prefs, setPrefs] = React.useState<string[]>([]);
   const [positionLevels, setPositionLevels] = React.useState<Record<string, number>>({});
-  const [availability, setAvailability] = React.useState<Record<string, string[]>>({});
 
-  // me geldiğinde forma doldur
   useEffect(() => {
     if (!me) return;
     setFoot((me.dominantFoot as any) || "N");
     setGeneralLevel(me.level ?? 5);
     setPrefs(Array.isArray(me.positions) ? me.positions : []);
     setPositionLevels(me.positionLevels ?? {});
-    setAvailability(me.availability ?? {});
   }, [me]);
 
   async function save() {
-    const token =
-      localStorage.getItem('token') ||
-      localStorage.getItem('access_token') ||
-      localStorage.getItem('jwt') ||
-      '';
-    if (!token) { alert('Giriş yapmalısın.'); return; }
-
     try {
+      const hdr = authHeader();
+      if (!hdr.Authorization) {
+        alert("Giriş yapmalısın.");
+        return;
+      }
+
       const body = {
-        dominantFoot: foot,               // 'L' | 'R' | 'N'
-        level: generalLevel,              // 1..10
-        positions: Array.from(new Set(prefs)).slice(0, 3), // ilk 3
-        positionLevels,                   // { RW:7, LW:6, ... }
-        availability,                     // { mon: ["20:00-24:00"], ... }
+        dominantFoot: foot,
+        level: generalLevel,
+        positions: Array.from(new Set(prefs)).slice(0, 3),
+        positionLevels,
       };
 
       const r = await fetch(`${API_URL}/users/me`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...hdr },
         body: JSON.stringify(body),
       });
 
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.message || `HTTP ${r.status}`);
 
-      alert('Kaydedildi!');
-      await refresh?.(); // useMe() varsa profil cache’ini yenile
+      alert("Kaydedildi!");
+      await refresh?.();
     } catch (e: any) {
-      alert(e?.message || 'Kaydetme hatası');
+      alert(e?.message || "Kaydetme hatası");
     }
   }
 
-  // Basit pozisyon seçimleri (mevcut kodundaki kısım)
   const ALL_POSITIONS = [
     { key: "GK", label: "Kaleci" },
     { key: "LB", label: "Sol Bek" },
@@ -982,7 +1184,6 @@ function ProfileScreen() {
     setPrefs((prev) => {
       const has = prev.includes(k);
       const next = has ? prev.filter((x) => x !== k) : [...prev, k];
-      // max 3 tercih
       if (next.length > 3) next.shift();
       return next;
     });
@@ -1046,22 +1247,18 @@ function ProfileScreen() {
           </div>
         </div>
 
-        {/* Pozisyona göre seviye slider'ları (ilk 3 tercih için) */}
+        {/* Pozisyona göre seviye slider'ları */}
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {prefs.map((p) => (
             <div key={p} className="rounded-xl bg-neutral-800 p-3">
-              <div className="mb-1 text-sm">
-                {ALL_POSITIONS.find((x) => x.key === p)?.label} – Seviye
-              </div>
+              <div className="mb-1 text-sm">{ALL_POSITIONS.find((x) => x.key === p)?.label} – Seviye</div>
               <div className="flex items-center gap-3">
                 <input
                   type="range"
                   min={1}
                   max={10}
                   value={positionLevels[p] ?? 7}
-                  onChange={(e) =>
-                    setPositionLevels((prev) => ({ ...prev, [p]: parseInt(e.target.value) }))
-                  }
+                  onChange={(e) => setPositionLevels((prev) => ({ ...prev, [p]: parseInt(e.target.value) }))}
                   className="w-full"
                 />
                 <div className="w-8 text-right">{positionLevels[p] ?? 7}</div>
@@ -1071,14 +1268,15 @@ function ProfileScreen() {
         </div>
 
         {/* Müsaitlik seçimi */}
-        <AvailabilityPicker value={availability} onChange={setAvailability} />
-
+        <div className="mt-4">
+          <AvailabilityEditor />
+        </div>
         <div className="mt-4">
           <button
             onClick={save}
             className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-neutral-950 hover:bg-emerald-500"
           >
-            Kaydet
+            Profili Kaydet
           </button>
         </div>
       </div>
@@ -1086,43 +1284,141 @@ function ProfileScreen() {
   );
 }
 
+/* ---------------------- Oyuncu ekranı (GERÇEK VERİ) ---------------------- */
 
-/* ---------------------- Oyuncu ekranı ---------------------- */
+type BehaviorAvg = {
+  punctuality: number;
+  respect: number;
+  sportsmanship: number;
+  swearing: number;     // negatif
+  aggression: number;   // negatif
+};
+type BehaviorResp = { avg: BehaviorAvg | null; si: number; samples: number };
+
+/** SI rengi (sayı + bar) */
+function siColor(si: number) {
+  if (si >= 90) return { bar: "bg-sky-500", text: "text-sky-400" };        // mavi
+  if (si >= 60) return { bar: "bg-emerald-500", text: "text-emerald-400" }; // yeşil
+  if (si >= 40) return { bar: "bg-amber-500", text: "text-amber-400" };     // sarı
+  return { bar: "bg-rose-500", text: "text-rose-400" };                     // kırmızı
+}
+
+/** Pozisyon etiketleri */
+function traitPosLabel(k: string) {
+  const map: Record<string, string> = {
+    GK: "Kaleci", LB: "Sol Bek", CB: "Stoper", RB: "Sağ Bek",
+    LWB: "Sol Kanat Bek", RWB: "Sağ Kanat Bek",
+    DM: "Ön Libero", CM: "Merkez", AM: "10 Numara",
+    LW: "Sol Kanat", RW: "Sağ Kanat", ST: "Santrafor", STP: "Stoper",
+  };
+  return map[k] || k;
+}
+
+/** Oy yokken gösterilecek başlangıç ortalaması */
+const BASELINE_AVG: BehaviorAvg = {
+  punctuality: 4, respect: 4, sportsmanship: 4, swearing: 2, aggression: 2,
+};
+
+/** Elindeki computeSI fonksiyonunu kullanarak avg -> SI */
+function siFromAvg(avg: BehaviorAvg) {
+  const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
+  const norm  = (v: number) => (clamp(v, 1, 5) - 1) / 4; // 1..5 → 0..1
+  const P = (norm(avg.punctuality) + norm(avg.respect) + norm(avg.sportsmanship)) / 3;
+  const Nminus = (1 - norm(avg.swearing) + 1 - norm(avg.aggression)) / 2;
+  return Math.round(100 * (0.6 * P + 0.4 * Nminus));
+}
+
+/** Yıldız satırı (sadece gösterim) */
+function RatingStars({
+  label, value, negative = false,
+}: {
+  label: string;
+  value: number;      // 1..5
+  negative?: boolean; // küfür/agresiflik true
+}) {
+  // renk: pozitiflerde değer yükseldikçe mavi/yeşil; negatiflerde değer yükseldikçe kırmızıya kayar
+  const colorClass = (() => {
+    const v = value;
+    if (!negative) {
+      if (v >= 4)   return "text-sky-400";
+      if (v >= 2.5) return "text-emerald-400";
+      if (v >= 1.5) return "text-amber-400";
+      return "text-rose-400";
+    } else {
+      if (v >= 4)   return "text-rose-400";
+      if (v >= 2.5) return "text-amber-400";
+      if (v >= 1.5) return "text-emerald-400";
+      return "text-sky-400";
+    }
+  })();
+
+  const filled = Math.round(value); // 1..5
+
+  return (
+    <div className="mt-1 flex items-center justify-between">
+      <span className="text-sm">{label}</span>
+      <div className="flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <svg
+            key={n}
+            viewBox="0 0 24 24"
+            className={`size-4 ${n <= filled ? colorClass : "text-neutral-600"}`}
+            fill="currentColor"
+            aria-hidden={true}
+          >
+            <title>{value.toFixed(1)}</title>
+            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+          </svg>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function PlayerProfile() {
-  const { me, loading, error, save } = useMe();
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const { me, loading, error } = useMe();
 
-  const labelOf = (k: string) =>
-    ({ GK:"Kaleci", LB:"Sol Bek", CB:"Stoper", RB:"Sağ Bek", LWB:"Sol Kanat Bek",
-       RWB:"Sağ Kanat Bek", DM:"Ön Libero", CM:"Merkez", AM:"10 Numara",
-       LW:"Sol Kanat", RW:"Sağ Kanat", ST:"Santrafor", STP:"Stoper" } as Record<string,string>)[k] || k;
-
-  const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
-
-  // 1) Hook'lar her zaman aynı sırada çağrılsın
-  const [traits, setTraits] = React.useState({ punctual:4, respect:4, fairplay:4, swearing:2, aggressive:2 });
-  const si = React.useMemo(() => computeSI(traits), [traits]);
-
-  // Formasyon state'i en başta (her render'da) tanımlansın
+  // Formasyon (me’de kayıtlı tercihi al)
   const [formation, setFormation] =
-    React.useState<"4-2-3-1" | "4-3-3" | "3-5-2">( (me?.preferredFormation as any) || "4-2-3-1" );
-
-  // Profilden pozisyonlar geldikçe formasyonu akıllıca öner
+    React.useState<"4-2-3-1" | "4-3-3" | "3-5-2">((me?.preferredFormation as any) || "4-2-3-1");
   React.useEffect(() => {
-    const current = (me?.preferredFormation as any) || "4-2-3-1";
-    setFormation(current);
+    if (me?.preferredFormation) setFormation(me.preferredFormation as any);
   }, [me?.preferredFormation]);
 
-  React.useEffect(() => {
-    const arr: string[] = Array.isArray(me?.positions) ? me!.positions : [];
-    const hasWingBack = arr.some((p) => p === "LWB" || p === "RWB");
-    if (hasWingBack && formation !== "3-5-2") {
-      setFormation("3-5-2");
-    }
-    // wingback yoksa kullanıcı seçimine karışmıyoruz
-  }, [me?.positions]); // formation'a bağımlı yapma ki kullanıcı seçimini bozmayalım
+  // Davranış verisi
+  const [behavior, setBehavior] = React.useState<BehaviorResp | null>(null);
+  const [bLoading, setBLoading] = React.useState(true);
 
-  // 2) Erken return'ler bundan SONRA gelsin
+  React.useEffect(() => {
+    (async () => {
+      if (!me?.id) return;
+      setBLoading(true);
+      try {
+        const r = await fetch(`${API_URL}/users/${me.id}/behavior`, {
+          headers: { ...authHeader() },
+          cache: "no-store",
+        });
+        const j = (await r.json()) as BehaviorResp;
+        setBehavior(j);
+      } catch {
+        // bağlantı hatasında da baseline’a düş
+        setBehavior({ avg: null, si: siFromAvg(BASELINE_AVG), samples: 0 });
+      } finally {
+        setBLoading(false);
+      }
+    })();
+  }, [me?.id, API_URL]);
+
+    const [posAgg, setPosAgg] = React.useState<Record<string,{avg:number,samples:number}>>({});
+    React.useEffect(()=>{
+      if(!me?.id) return;
+      fetch(`${API_URL}/users/${me.id}/positions`, { headers:{...authHeader()}, cache:'no-store' })
+        .then(r=>r.json())
+        .then(j=> setPosAgg(j?.byPos || {}))
+        .catch(()=> setPosAgg({}));
+    }, [me?.id]);
+
   if (loading) return <div className="mx-auto max-w-4xl p-4">Yükleniyor…</div>;
   if (error)   return <div className="mx-auto max-w-4xl p-4 text-red-400">❌ {error}</div>;
   if (!me)     return null;
@@ -1130,9 +1426,46 @@ function PlayerProfile() {
   const prefs: string[] = Array.isArray(me.positions) ? me.positions : [];
   const levels: Record<string, number> =
     me.positionLevels && typeof me.positionLevels === "object" ? me.positionLevels : {};
-  const skillOf = (k: string) => clamp(levels[k] ?? 6, 1, 10);
+  // sahadaki anahtarı profil anahtarına eşle (STP -> CB gibi)
+  const mapToProfileKey = (k: string) => (k === 'STP' ? 'CB' : k);
+  const perfOf = (rawKey: string) => {
+    const key = mapToProfileKey(rawKey);
+    const row = (posAgg as any)?.[key] || (posAgg as any)?.[rawKey];
+    return row?.avg as number | undefined; // 1..10
+  };
+
+  const skillOf = (rawKey: string) => {
+    // 0) gerçek ortalama varsa onu bas
+    const perf = perfOf(rawKey);
+    if (typeof perf === 'number') return Math.max(1, Math.min(10, perf));
+
+    // 1) profil stored seviye?
+    const key = mapToProfileKey(rawKey);
+    const stored = (levels as any)?.[key];
+    if (typeof stored === 'number') return Math.max(1, Math.min(10, stored));
+
+    // 2) tercih edilen pozisyon → genel seviye
+    if (Array.isArray(prefs) && prefs.includes(key)) {
+      const g = typeof me?.level === 'number' ? me.level : 6;
+      return Math.max(1, Math.min(10, g));
+    }
+    // 3) diğerleri 5
+    return 5;
+  };
 
   const slots = FORMATIONS[formation];
+
+  // Gösterilecek ortalama: gerçek varsa o, yoksa baseline
+  const showAvg: BehaviorAvg = behavior?.avg ?? BASELINE_AVG;
+  // SI: gerçek varsa behavior.si, yoksa showAvg'dan hesap
+  const si = behavior?.avg ? (behavior?.si ?? 70) : siFromAvg(showAvg);
+  const siC = siColor(si);
+
+  // Uyarılar (yalnız gerçek veri varsa)
+  const warnings =
+    behavior?.avg &&
+    (Object.entries(behavior.avg) as [keyof BehaviorAvg, number][])
+      .filter(([, v]) => v < 2.5);
 
   return (
     <div className="mx-auto grid max-w-4xl gap-4">
@@ -1143,12 +1476,7 @@ function PlayerProfile() {
             {(["4-2-3-1", "4-3-3", "3-5-2"] as const).map((f) => (
               <button
                 key={f}
-                onClick={async () => {
-                  setFormation(f);
-                  try {
-                  } catch {
-                  }
-                }}
+                onClick={() => setFormation(f)}
                 className={`rounded-lg px-3 py-1 text-sm ${
                   formation === f ? "bg-emerald-500 text-neutral-900" : "bg-neutral-800"
                 }`}
@@ -1174,15 +1502,19 @@ function PlayerProfile() {
             ))}
           </div>
 
-          {/* Sağ panel */}
+          {/* Sağ panel: Tercihler + Davranış */}
           <div className="space-y-4">
+            {/* Tercihler */}
             <div className="rounded-xl border border-white/10 p-3">
               <div className="text-sm text-neutral-300">Tercihlerim</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {prefs.length ? (
                   prefs.map((k: string, i: number) => (
-                    <span key={k} className="rounded-full bg-emerald-500/20 px-3 py-1 text-sm text-emerald-300">
-                      {i + 1}. {labelOf(k)} • {skillOf(k)}
+                    <span
+                      key={k}
+                      className="rounded-full bg-emerald-500/20 px-3 py-1 text-sm text-emerald-300"
+                    >
+                      {i + 1}. {traitPosLabel(k)} • {skillOf(k)}
                     </span>
                   ))
                 ) : (
@@ -1191,22 +1523,50 @@ function PlayerProfile() {
               </div>
             </div>
 
+            {/* Davranış */}
             <div className="rounded-xl border border-white/10 p-3">
-              <div className="mb-2 text-sm text-neutral-300">Davranış Değerlendirmeleri (anonim, 1–5)</div>
-              <TraitRow label="Dakiklik"   value={traits.punctual}  onChange={(v)=>setTraits({ ...traits, punctual:v })}/>
-              <TraitRow label="Saygı"       value={traits.respect}   onChange={(v)=>setTraits({ ...traits, respect:v })}/>
-              <TraitRow label="Sportmenlik" value={traits.fairplay}  onChange={(v)=>setTraits({ ...traits, fairplay:v })}/>
-              <TraitRow label="Küfür"       value={traits.swearing}  onChange={(v)=>setTraits({ ...traits, swearing:v })} negative/>
-              <TraitRow label="Agresiflik"  value={traits.aggressive}onChange={(v)=>setTraits({ ...traits, aggressive:v })} negative/>
-              <div className="mt-3 flex items-center justify-between rounded-xl bg-neutral-800 p-3">
-                <div>
-                  <div className="text-xs text-neutral-400">Sportmenlik Katsayısı</div>
-                  <div className="text-2xl font-semibold text-emerald-400">{si}</div>
-                </div>
-                <div className="h-2 w-40 overflow-hidden rounded bg-neutral-900">
-                  <div className="h-full bg-emerald-500" style={{ width: `${si}%` }} />
-                </div>
+              <div className="mb-2 text-sm text-neutral-300">
+                Davranış Değerlendirmeleri (anonim, 1–5)
               </div>
+
+              {bLoading && <div className="text-xs text-neutral-400">Yükleniyor…</div>}
+
+              {!bLoading && (
+                <>
+                  <RatingStars label="Dakiklik"   value={showAvg.punctuality} />
+                  <RatingStars label="Saygı"       value={showAvg.respect} />
+                  <RatingStars label="Sportmenlik" value={showAvg.sportsmanship} />
+                  <RatingStars label="Küfür"       value={showAvg.swearing}   negative />
+                  <RatingStars label="Agresiflik"  value={showAvg.aggression} negative />
+
+                  <div className="mt-3 flex items-center justify-between rounded-xl bg-neutral-800 p-3">
+                    <div>
+                      <div className="text-xs text-neutral-400">Sportmenlik Katsayısı</div>
+                      <div className={`text-2xl font-semibold ${siC.text}`}>{si}</div>
+                      <div className="text-[11px] text-neutral-400">
+                        {behavior?.avg ? `Örnek sayısı: ${behavior?.samples ?? 0}` : "Topluluk başlangıcı"}
+                      </div>
+                    </div>
+                    <div className="h-2 w-40 overflow-hidden rounded bg-neutral-900">
+                      <div className={`h-full ${siC.bar}`} style={{ width: `${si}%` }} />
+                    </div>
+                  </div>
+
+                  {warnings && warnings.length > 0 && (
+                    <div className="mt-3 rounded-lg bg-yellow-500/10 p-2 text-[12px] text-amber-300">
+                      <div className="font-medium">Uyarılar</div>
+                      <ul className="list-disc pl-4">
+                        {warnings.map(([k, v]) => (
+                          <li key={k}>
+                            {({ punctuality:"Dakiklik", respect:"Saygı", sportsmanship:"Sportmenlik", swearing:"Küfür", aggression:"Agresiflik" } as any)[k]}{" "}
+                            ort. {v.toFixed(1)} — {v < 1.5 ? "kırmızı" : "sarı"}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1216,7 +1576,7 @@ function PlayerProfile() {
         <h3 className="mb-2 text-base font-semibold">Açıklama</h3>
         <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-300">
           <li>Diziliş seçimi sahadaki mevkileri günceller (3-5-2'de <b>LWB/RWB</b> görünür).</li>
-          <li>Tercihler rozetleri profilden gelir; seviyeler aynı şekilde yansır.</li>
+          <li>Değerlendirmeler 24 saat içinde yapılır ve ağırlıklandırılır.</li>
         </ul>
       </section>
     </div>
@@ -1261,8 +1621,7 @@ function PositionBadge({
       style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
       title={`${pos.label} • Seviye ${skill}`}
     >
-      <span className="font-medium">{pos.key}</span>{" "}
-      <span className="opacity-80">{skill}</span>
+      <span className="font-medium">{pos.key}</span> <span className="opacity-80">{skill}</span>
       {active && <span className="ml-1 rounded bg-neutral-900/30 px-1">{prefIndex + 1}</span>}
     </button>
   );
@@ -1291,20 +1650,10 @@ function TraitRow({
               value >= n ? (negative ? "bg-red-500/70" : "bg-emerald-500/80") : "bg-neutral-800"
             }`}
           >
-            <Star className="size-4" />
+            <IconStar className="size-4" />
           </button>
         ))}
       </div>
     </div>
   );
-}
-
-function togglePref(prefs: PositionKey[], setPrefs: (v: PositionKey[]) => void, key: PositionKey) {
-  if (prefs.includes(key)) {
-    setPrefs(prefs.filter((k) => k !== key));
-  } else {
-    const next = [...prefs, key];
-    if (next.length > 3) next.shift();
-    setPrefs(next);
-  }
 }

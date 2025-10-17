@@ -26,3 +26,35 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+// --- DAVET API ---
+// Maça davet oluştur (arkadaş id'leri ve/veya telefonlar)
+export function postInvites(matchId: string, payload: {
+  toUserIds?: string[];
+  toPhones?: string[];
+  message?: string;
+}) {
+  return api<{ created: number }>(`/matches/${matchId}/invites`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// Gelen davet kutusu
+export function getInbox() {
+  return api<Array<{
+    id: string;
+    status: 'PENDING'|'ACCEPTED'|'DECLINED'|'EXPIRED';
+    createdAt: string;
+    match?: { id: string; title?: string | null };
+    fromUser?: { id: string; phone?: string | null };
+  }>>('/invites/inbox');
+}
+
+// Davete cevap
+export function respondInvite(inviteId: string, action: 'accept' | 'decline') {
+  return api<{ ok: boolean }>(`/invites/${inviteId}/respond`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  });
+}
+

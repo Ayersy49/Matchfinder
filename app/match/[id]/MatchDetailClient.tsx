@@ -4,11 +4,16 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { authHeader, clearToken, myId } from '@/lib/auth';
+import InviteFriendsClient from './InviteFriendsClient';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 /* ===================== Tipler ===================== */
 type Team = 'A' | 'B';
+
+function labelPos(p: string) {
+  return p === 'SUB' ? 'Yedek' : p;
+}
 
 type Slot = {
   team: Team;          // "A" | "B"
@@ -38,6 +43,18 @@ type ChatItem = {
   editedAt: string | null;
 };
 
+/** Önerilen oyuncu tipi (backend alan adları biraz farklı olabilir; korumalı okuyacağız) */
+type Recommended = {
+  id: string;
+  phone?: string | null;
+  level?: number | null;
+  positions?: string[] | null;
+  distanceKm?: number | null;
+  ratingScore?: number | null;          // 0..100 (yoksa null)
+  risk?: 'RED' | 'YELLOW' | 'GREEN' | null; // opsiyonel
+  invited?: boolean;                    // FE’de kullanacağız
+};
+
 /* ===================== Yardımcılar ===================== */
 function handle401(status: number) {
   if (status === 401) {
@@ -49,15 +66,36 @@ function handle401(status: number) {
   return false;
 }
 
+function maskPhone(p?: string | null) {
+  const s = (p || '').replace(/\D/g, '');
+  if (s.length < 7) return '—';
+  return s.slice(0, 3) + ' *** ' + s.slice(-2);
+}
+
+function badgeForScore(score?: number | null) {
+  // 0..100 -> renk
+  if (score == null) return { cls: 'bg-neutral-700 text-neutral-200', label: '—' };
+  if (score >= 90) return { cls: 'bg-sky-700/70 text-sky-100', label: 'Mavi' };
+  if (score >= 60) return { cls: 'bg-emerald-700/70 text-emerald-100', label: 'Yeşil' };
+  if (score >= 40) return { cls: 'bg-amber-700/70 text-amber-100', label: 'Sarı' };
+  return { cls: 'bg-rose-700/70 text-rose-100', label: 'Kırmızı' };
+}
+
 /* ======================= Mini Davet Paneli ======================= */
-function InviteMini({ matchId }: { matchId: string }) {
+function InviteMini({ matchId, onOpenInvite }: { matchId: string; onOpenInvite: () => void }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
       <div className="mb-2 text-sm font-medium">Arkadaş çağır</div>
       <div className="mb-3 text-xs text-neutral-300">
-        Yakındaki oyuncuları keşfet ve bu maça davet et.
+        Yakındaki oyuncuları keşfet ve bu maça davet et ya da arkadaşlarından seç.
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={onOpenInvite}
+          className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+        >
+          Arkadaşlarından seç
+        </button>
         <Link
           href={`/discover?matchId=${matchId}`}
           className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
@@ -153,7 +191,6 @@ function MatchChat({ matchId }: { matchId: string }) {
     const text = editText.trim();
     if (!msgId || !text) return;
 
-    // optimistic
     setItems((prev) =>
       prev.map((m) => (m.id === msgId ? { ...m, text, editedAt: new Date().toISOString() } : m)),
     );
@@ -205,9 +242,8 @@ function MatchChat({ matchId }: { matchId: string }) {
           <div className="text-sm text-neutral-400">Henüz mesaj yok.</div>
         ) : (
           items.map((m) => {
-            const isMine = m.userId === me;
+            const isMine = m.userId === myId();
 
-            // Düzenleme modunda
             if (editId === m.id && !m.deleted) {
               return (
                 <div key={m.id} className="flex justify-start">
@@ -253,7 +289,6 @@ function MatchChat({ matchId }: { matchId: string }) {
               );
             }
 
-            // Normal mesaj
             return (
               <div key={m.id} className="flex justify-start">
                 <div className="w-full max-w-xl rounded-2xl bg-[#10151c] px-3 py-2 text-left shadow-sm ring-1 ring-white/10">
@@ -319,6 +354,149 @@ function MatchChat({ matchId }: { matchId: string }) {
   );
 }
 
+/* ======================= ÖNERİLEN DAVETLER ======================= */
+function RecommendedPanel({
+  matchId,
+  needPos,            // 'ANY' | 'GK' | 'ST' ... (ihtiyaç)
+  team,               // 'A' | 'B' | 'ANY'
+}: {
+  matchId: string;
+  needPos: string;
+  team: 'A' | 'B' | 'ANY';
+}) {
+  const [items, setItems] = React.useState<Recommended[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [inviting, setInviting] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = new URLSearchParams();
+      if (needPos && needPos !== 'ANY') qs.set('pos', needPos);
+      if (team && team !== 'ANY') qs.set('team', team);
+      const r = await fetch(`${API_URL}/matches/${matchId}/recommended?${qs.toString()}`, {
+        headers: { ...authHeader() },
+        cache: 'no-store',
+      });
+      if (handle401(r.status)) return;
+      const data = await r.json().catch(() => ({}));
+      const arr: any[] = Array.isArray(data?.items) ? data.items : [];
+      const mapped: Recommended[] = arr.map((x) => ({
+        id: String(x.id),
+        phone: x.phone ?? x.phoneMasked ?? null,
+        level: typeof x.level === 'number' ? x.level : null,
+        positions: Array.isArray(x.positions) ? x.positions : null,
+        distanceKm: typeof x.distanceKm === 'number' ? x.distanceKm : null,
+        ratingScore: typeof x.ratingScore === 'number' ? x.ratingScore : null,
+        risk: (x.risk as any) ?? null,
+        invited: Boolean(x.invited),
+      }));
+      setItems(mapped);
+    } catch (e: any) {
+      setError(e?.message || 'Öneriler alınamadı');
+    } finally {
+      setLoading(false);
+    }
+  }, [matchId, needPos, team]);
+
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  async function invite(userId: string) {
+    if (inviting) return;
+    setInviting(userId);
+    // optimistic
+    setItems(prev => prev.map(it => it.id === userId ? { ...it, invited: true } : it));
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ toUserId: userId }),
+      });
+      if (handle401(r.status)) return;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || 'Davet gönderilemedi');
+    } catch (e: any) {
+      alert(e?.message || 'Davet gönderilemedi');
+      setItems(prev => prev.map(it => it.id === userId ? { ...it, invited: false } : it));
+    } finally {
+      setInviting(null);
+    }
+  }
+
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+      <div className="mb-2 text-sm font-semibold">Önerilen davetler</div>
+
+      {loading ? (
+        <div className="text-sm text-neutral-400">Yükleniyor…</div>
+      ) : error ? (
+        <div className="text-sm text-rose-400">{error}</div>
+      ) : !items.length ? (
+        <div className="text-sm text-neutral-400">Uygun öneri yok.</div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map((p) => {
+            const badge = badgeForScore(p.ratingScore);
+            return (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0f141b] px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className={`rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>{badge.label}</div>
+                    {typeof p.level === 'number' && (
+                      <div className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-200">
+                        Seviye {p.level}
+                      </div>
+                    )}
+                    {p.distanceKm != null && (
+                      <div className="text-[10px] text-neutral-400">{p.distanceKm.toFixed(1)} km</div>
+                    )}
+                  </div>
+                  <div className="truncate text-sm text-neutral-100">{maskPhone(p.phone)}</div>
+                  {p.positions && p.positions.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {p.positions.slice(0, 4).map((x) => (
+                        <span
+                          key={x}
+                          className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-neutral-300"
+                        >
+                          {x}
+                        </span>
+                      ))}
+                      {p.positions.length > 4 && (
+                        <span className="text-[11px] text-neutral-400">+{p.positions.length - 4}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  disabled={p.invited || inviting === p.id}
+                  onClick={() => invite(p.id)}
+                  className={`shrink-0 rounded-lg px-2 py-1 text-xs ${
+                    p.invited
+                      ? 'bg-neutral-800 text-neutral-300'
+                      : 'bg-emerald-600 text-neutral-900 hover:bg-emerald-500'
+                  } disabled:opacity-60`}
+                >
+                  {p.invited ? 'Gönderildi' : inviting === p.id ? 'Gönderiliyor…' : 'Davet et'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ==================== DETAY SAYFASI ==================== */
 export default function MatchDetailClient({ id }: { id: string }) {
   const me = myId();
@@ -338,6 +516,9 @@ export default function MatchDetailClient({ id }: { id: string }) {
     price: '' as number | '',
     time: '',
   });
+
+  // Davet modal state
+  const [inviteOpen, setInviteOpen] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
@@ -376,6 +557,39 @@ export default function MatchDetailClient({ id }: { id: string }) {
   const mySlot = m?.slots?.find((s) => s.userId === me) || null;
   const teamA = (m?.slots || []).filter((s) => s.team === 'A');
   const teamB = (m?.slots || []).filter((s) => s.team === 'B');
+
+  // Doluluk / Yedek uygunluğu
+  const coreA = teamA.filter((s) => s.pos !== 'SUB');
+  const coreB = teamB.filter((s) => s.pos !== 'SUB');
+  const isFullA = coreA.length > 0 && coreA.every((s) => !!s.userId);
+  const isFullB = coreB.length > 0 && coreB.every((s) => !!s.userId);
+  const canSubA = teamA.some((s) => s.pos === 'SUB' && !s.userId);
+  const canSubB = teamB.some((s) => s.pos === 'SUB' && !s.userId);
+
+  // İhtiyaç pozisyonu (öneriler için)
+  function calcNeeds(slots: Slot[], team?: Team) {
+    const list = slots.filter((s) => s.pos !== 'SUB' && (!team || s.team === team));
+    // pos -> boş sayısı
+    const map = new Map<string, number>();
+    for (const s of list) {
+      if (!s.userId) map.set(s.pos, (map.get(s.pos) || 0) + 1);
+    }
+    // en çok boş olandan başla
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([pos]) => pos);
+  }
+  const needA = calcNeeds(m?.slots || [], 'A');
+  const needB = calcNeeds(m?.slots || [], 'B');
+  // varsayılan odak: önce A’daki eksik, yoksa B, o da yoksa 'ANY'
+  const defaultNeed = (needA[0] || needB[0] || 'ANY') as string;
+  const [focusPos, setFocusPos] = React.useState<string>(defaultNeed);
+  const [focusTeam, setFocusTeam] = React.useState<'A' | 'B' | 'ANY'>(needA.length ? 'A' : needB.length ? 'B' : 'ANY');
+
+  React.useEffect(() => {
+    // maç değişince ihtiyaçları yeniden yansıt
+    setFocusPos(defaultNeed);
+    setFocusTeam(needA.length ? 'A' : needB.length ? 'B' : 'ANY');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m?.id, m?.slots?.length]);
 
   /** Takıma pozisyonsuz katıl (tercihlerden uygun olanı backend seçer) */
   async function joinTeam(team: Team) {
@@ -425,25 +639,18 @@ export default function MatchDetailClient({ id }: { id: string }) {
     }
   }
 
-  /** Eski: takıma bakmadan, sadece pozisyonla katıl */
-  async function join(pos?: string) {
+  /** Takım yedeği (SUB) olarak katıl – sadece boş SUB varsa gösteriyoruz */
+  async function joinAsSub(team: Team) {
     try {
       setBusy(true);
       const r = await fetch(`${API_URL}/matches/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ matchId: id, pos }),
+        body: JSON.stringify({ matchId: id, team, pos: 'SUB' }),
       });
       if (handle401(r.status)) return;
-
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        if (r.status === 409 && data?.message === 'no preferred open slot') {
-          alert('Tercih ettiğin pozisyonlar dolu. Lütfen alttan boş bir pozisyon seç.');
-          return;
-        }
-        throw new Error(data?.message || 'Katılım başarısız');
-      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok !== true) throw new Error(j?.message || 'Katılım başarısız');
       await refresh();
     } catch (e: any) {
       alert(e?.message || 'Katılım başarısız');
@@ -531,7 +738,24 @@ export default function MatchDetailClient({ id }: { id: string }) {
           <div className="text-base font-semibold">{m.title || 'Maç'}</div>
         </div>
 
+        {/* Sağ taraf: Arkadaşlar + Davetler + (opsiyonel) Düzenle */}
         <div className="flex items-center gap-2">
+          <Link
+            href="/friends"
+            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+            title="Arkadaşlar"
+          >
+            Arkadaşlar
+          </Link>
+
+          <Link
+            href="/invites"
+            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+            title="Davetler"
+          >
+            Davetler
+          </Link>
+
           {isOwner && (
             <button
               onClick={() => setEditOpen(true)}
@@ -566,7 +790,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
             Senin durumun:{' '}
             {mySlot ? (
               <span className="text-emerald-400">
-                Takım {mySlot.team} • Pozisyon: {mySlot.pos}
+                Takım {mySlot.team} • Pozisyon: {labelPos(mySlot.pos)}
               </span>
             ) : (
               <span className="text-neutral-400">Henüz katılmadın</span>
@@ -578,18 +802,40 @@ export default function MatchDetailClient({ id }: { id: string }) {
               <>
                 <button
                   onClick={() => joinTeam('A')}
-                  disabled={busy}
+                  disabled={busy || isFullA}
+                  title={isFullA ? 'Takım A dolu (yedek olabilirsiniz)' : ''}
                   className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
                 >
                   Takım A’ya katıl
                 </button>
                 <button
                   onClick={() => joinTeam('B')}
-                  disabled={busy}
+                  disabled={busy || isFullB}
+                  title={isFullB ? 'Takım B dolu (yedek olabilirsiniz)' : ''}
                   className="rounded-xl bg-blue-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-blue-500 disabled:opacity-50"
                 >
                   Takım B’ye katıl
                 </button>
+
+                {/* Takım doluysa ve boş SUB varsa yedek katılım */}
+                {isFullA && canSubA && (
+                  <button
+                    onClick={() => joinAsSub('A')}
+                    disabled={busy}
+                    className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                  >
+                    Yedek ol (A)
+                  </button>
+                )}
+                {isFullB && canSubB && (
+                  <button
+                    onClick={() => joinAsSub('B')}
+                    disabled={busy}
+                    className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                  >
+                    Yedek ol (B)
+                  </button>
+                )}
               </>
             ) : (
               <button
@@ -636,7 +882,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
                     if (isEmpty && !mySlot && !busy) joinSpecific('A', s.pos);
                   }}
                 >
-                  {s.pos}
+                  {labelPos(s.pos)}
                 </span>
               );
             })}
@@ -673,7 +919,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
                     if (isEmpty && !mySlot && !busy) joinSpecific('B', s.pos);
                   }}
                 >
-                  {s.pos}
+                  {labelPos(s.pos)}
                 </span>
               );
             })}
@@ -710,7 +956,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
 
             <input
               className="w-full rounded bg-neutral-800 px-3 py-2"
-              placeholder="Format (5v5/7v7/8v8/11v11)"
+              placeholder="Format (5v5 / 6v6 / 7v7 / 8v8 / 9v9 / 10v10 / 11v11)"
               value={editForm.format}
               onChange={(e) => setEditForm((f) => ({ ...f, format: e.target.value }))}
             />
@@ -754,8 +1000,36 @@ export default function MatchDetailClient({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Davet mini + Sohbet */}
-      <InviteMini matchId={m.id} />
+      {/* Davet mini + Önerilenler + modal + Sohbet */}
+      <InviteMini matchId={m.id} onOpenInvite={() => setInviteOpen(true)} />
+
+      {/* İhtiyaç seçiciler */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-xs text-neutral-400">İhtiyaç odağı:</div>
+        <select
+          className="rounded-lg border border-white/10 bg-neutral-900 px-2 py-1 text-sm"
+          value={focusTeam}
+          onChange={(e) => setFocusTeam(e.target.value as any)}
+        >
+          <option value="ANY">Takım (hepsi)</option>
+          <option value="A">Takım A</option>
+          <option value="B">Takım B</option>
+        </select>
+        <select
+          className="rounded-lg border border-white/10 bg-neutral-900 px-2 py-1 text-sm"
+          value={focusPos}
+          onChange={(e) => setFocusPos(e.target.value)}
+        >
+          <option value="ANY">Pozisyon (hepsi)</option>
+          {[...new Set([...needA, ...needB])].map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      </div>
+
+      <RecommendedPanel matchId={m.id} needPos={focusPos} team={focusTeam} />
+
+      <InviteFriendsClient open={inviteOpen} onClose={() => setInviteOpen(false)} matchId={m.id} />
       <MatchChat matchId={m.id} />
     </div>
   );

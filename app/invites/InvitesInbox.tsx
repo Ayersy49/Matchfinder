@@ -3,6 +3,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -46,6 +47,8 @@ const STATUS_TR: Record<InviteRow["status"], string> = {
 };
 
 export default function InvitesInbox() {
+  const router = useRouter();
+
   const [tab, setTab] = React.useState<"INBOX" | "SENT">("INBOX");
   const [items, setItems] = React.useState<InviteRow[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -77,7 +80,11 @@ export default function InvitesInbox() {
     load();
   }, [load]);
 
-  async function respond(inviteId: string, action: "ACCEPT" | "DECLINE" | "CANCEL") {
+  async function respond(
+    inviteId: string,
+    action: "ACCEPT" | "DECLINE" | "CANCEL",
+    matchIdHint?: string
+  ) {
     try {
       const r = await fetch(`${API_URL}/matches/invites/${inviteId}/respond`, {
         method: "POST",
@@ -89,7 +96,23 @@ export default function InvitesInbox() {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || !data?.ok) throw new Error(data?.message || "İşlem başarısız");
-      await load();
+
+      if (action === "ACCEPT") {
+        const matchId = String(data?.matchId || matchIdHint || "");
+        if (data?.autoJoined) {
+          const extra =
+            data?.team && data?.pos ? `: Takım ${data.team} • ${data.pos}` : "";
+          alert(`Otomatik yerleştirildin${extra}.`);
+          await load();
+        } else if (matchId) {
+          // Boş yer bulunamadı; mevki seçmesi için detaya yönlendir
+          router.push(`/match/${matchId}?pick=1`);
+        } else {
+          await load();
+        }
+      } else {
+        await load();
+      }
     } catch (e: any) {
       alert(e?.message || "İşlem başarısız");
     }
@@ -97,7 +120,7 @@ export default function InvitesInbox() {
 
   return (
     <div className="rounded-2xl border border-white/10 bg-neutral-900/60">
-      {/* ====== ÜST BAR: Ana menü + Başlık ====== */}
+      {/* ÜST BAR */}
       <div className="flex items-center justify-between border-b border-white/10 p-3">
         <div className="flex items-center gap-2">
           <Link
@@ -110,7 +133,7 @@ export default function InvitesInbox() {
         </div>
       </div>
 
-      {/* ====== SEKME + FİLTRE ====== */}
+      {/* SEKME + FİLTRE */}
       <div className="flex items-center justify-between border-b border-white/10 p-3">
         <div className="flex gap-2">
           <button
@@ -144,7 +167,7 @@ export default function InvitesInbox() {
         </select>
       </div>
 
-      {/* ====== LİSTE ====== */}
+      {/* LİSTE */}
       <div className="p-3">
         {loading ? (
           <div className="text-sm text-neutral-400">Yükleniyor…</div>
@@ -155,31 +178,25 @@ export default function InvitesInbox() {
             {items.map((x) => {
               const canAcceptDecline = tab === "INBOX" && x.status === "PENDING";
               const canCancel = tab === "SENT" && x.status === "PENDING";
-              const matchId = x.match?.id ?? x.matchId; // Detay linki için
+              const matchId = x.match?.id ?? x.matchId;
 
               return (
-                <div
-                  key={x.id}
-                  className="rounded-xl border border-white/10 bg-neutral-900 p-3"
-                >
+                <div key={x.id} className="rounded-xl border border-white/10 bg-neutral-900 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium">
                         {tab === "INBOX" ? (
                           <>
-                            <span className="opacity-70">Gönderen:</span>{" "}
-                            {x.from?.phone ?? "—"}
+                            <span className="opacity-70">Gönderen:</span> {x.from?.phone ?? "—"}
                           </>
                         ) : (
                           <>
-                            <span className="opacity-70">Alıcı:</span>{" "}
-                            {x.to?.phone ?? "—"}
+                            <span className="opacity-70">Alıcı:</span> {x.to?.phone ?? "—"}
                           </>
                         )}
                       </div>
                       <div className="mt-0.5 text-xs text-neutral-300">
-                        {x.match?.title || "Maç"} • {x.match?.location || "—"} •{" "}
-                        {x.match?.format || "—"}
+                        {x.match?.title || "Maç"} • {x.match?.location || "—"} • {x.match?.format || "—"}
                         {x.match?.time
                           ? ` • ${new Date(x.match.time).toLocaleString([], {
                               dateStyle: "short",
@@ -188,13 +205,10 @@ export default function InvitesInbox() {
                           : ""}
                       </div>
                       {x.message ? (
-                        <div className="mt-1 text-xs italic text-neutral-400">
-                          “{x.message}”
-                        </div>
+                        <div className="mt-1 text-xs italic text-neutral-400">“{x.message}”</div>
                       ) : null}
                     </div>
 
-                    {/* durum badge */}
                     <span
                       className={[
                         "rounded-full px-2 py-1 text-xs ring-1",
@@ -211,14 +225,11 @@ export default function InvitesInbox() {
                       {STATUS_TR[x.status]}
                     </span>
 
-                    {/* aksiyonlar */}
                     <div className="flex items-center gap-2">
-                      {/* Kabul edilmiş davet → Maç detayına git */}
                       {x.status === "ACCEPTED" && matchId && (
                         <Link
                           href={`/match/${matchId}`}
                           className="rounded-lg bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
-                          title="Maç detayına git"
                         >
                           Detay
                         </Link>
@@ -227,7 +238,7 @@ export default function InvitesInbox() {
                       {canAcceptDecline && (
                         <>
                           <button
-                            onClick={() => respond(x.id, "ACCEPT")}
+                            onClick={() => respond(x.id, "ACCEPT", matchId)}
                             className="text-xs text-emerald-300 hover:underline"
                           >
                             Kabul et
