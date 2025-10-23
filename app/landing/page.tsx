@@ -7,6 +7,18 @@ import Link from "next/link";
 import { authHeader, clearToken, getToken, setToken } from "@/lib/auth";
 import AvailabilityEditor from "../profil/AvailabilityEditor";
 
+
+type AccessInfo = {
+  owner: boolean;
+  joined: boolean;
+  canView: boolean;
+  requestPending: boolean;
+};
+
+// MatchLite'a dokunmadan yerelde genişletiyoruz
+type MatchLiteWithAccess = MatchLite & { access?: AccessInfo };
+
+
 // API kökü + header helper
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 const H = (): HeadersInit => (authHeader() as unknown as HeadersInit);
@@ -15,7 +27,12 @@ const H = (): HeadersInit => (authHeader() as unknown as HeadersInit);
 
 function RateStar({filled=false,onClick}:{filled?:boolean;onClick?:()=>void}) {
   return (
-    <span onClick={onClick} className={`cursor-pointer ${filled?'text-emerald-400':'text-zinc-500'}`}>★</span>
+    <span
+      onClick={onClick}
+      className={`inline-block leading-none text-base cursor-pointer ${filled ? 'text-emerald-400' : 'text-zinc-500'}`}
+    >
+      ★
+    </span>
   );
 }
 function TraitStars({value,set}:{value:number,set:(n:number)=>void}) {
@@ -23,6 +40,41 @@ function TraitStars({value,set}:{value:number,set:(n:number)=>void}) {
     <div className="flex items-center gap-1">
       {[1,2,3,4,5].map(n=>(
         <RateStar key={n} filled={value>=n} onClick={()=>set(n)} />
+      ))}
+    </div>
+  );
+}
+
+function ScorePills({
+  value,
+  set,
+}: {
+  value: number;
+  set: (n: number) => void;
+}) {
+  const opts = Array.from({ length: 10 }, (_, i) => i + 1);
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Oyun (1–10)"
+      className="flex flex-wrap gap-1"
+    >
+      {opts.map((n) => (
+        <button
+          key={n}
+          type="button"
+          role="radio"
+          aria-checked={value === n}
+          onClick={() => set(n)}
+          className={
+            "h-7 w-7 rounded-md text-xs ring-1 ring-white/10 " +
+            (value === n
+              ? "bg-emerald-600 text-neutral-950"
+              : "bg-neutral-800 text-neutral-200 hover:bg-neutral-700")
+          }
+        >
+          {n}
+        </button>
       ))}
     </div>
   );
@@ -71,6 +123,7 @@ function RateMatchModal({
       userId: string;
       phone?: string | null;
       pos?: string | null; // BE pending cevabında varsa gelir
+      include: boolean;
       traits: {
         punctuality: number;
         respect: number;
@@ -92,6 +145,7 @@ function RateMatchModal({
         userId: String(p.id),
         phone: p.phone ?? null,
         pos: p.pos ?? null, // varsa gösteririz
+        include: true,
         traits: {
           punctuality: 3,
           respect: 3,
@@ -104,35 +158,49 @@ function RateMatchModal({
     );
   }, [open, match]);
 
-  // Kaydet
+  
+  // Kaydet (BACKEND: POST /ratings/:matchId/submit  { items: [...] })
   async function save() {
     try {
       setSaving(true);
+      const selected = rows.filter((r) => r.include);
+      if (selected.length === 0) {
+        alert("Kimse seçilmedi.");
+        setSaving(false);
+        return;
+      }
 
-      // 1) Davranış puanları (1..5)
-      const ratings = rows.map((r) => ({
+      const items = selected.map((r) => ({
         rateeId: r.userId,
-        traits: r.traits,
+        pos: r.pos ?? undefined,
+        posScore: r.pos ? Math.max(1, Math.min(10, Math.round(Number(r.posScore)))) : undefined,
+        traits: {
+          punctuality: r.traits.punctuality,
+          respect: r.traits.respect,
+          sports: r.traits.sportsmanship, // FE->BE anahtar dönüşümü
+          swearing: r.traits.swearing,
+          aggression: r.traits.aggression,
+        },
       }));
-
-      // 2) Mevki puanları (1..10) — yalnızca pos varsa gönder
-      const posRatings = rows
-        .filter((r) => r.pos && Number.isFinite(r.posScore))
-        .map((r) => ({
-          rateeId: r.userId,
-          pos: String(r.pos),
-          score: Math.max(1, Math.min(10, Math.round(Number(r.posScore)))),
-        }));
-
-      const endpoint = `${API_URL}/ratings/${match.matchId}/submit-bulk`;
+      
+      const endpoint = `${API_URL}/ratings/${match.matchId}/submit`;
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(H() as any) },
-        body: JSON.stringify({ ratings, posRatings }),
+        body: JSON.stringify({ items }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok !== true) throw new Error(j?.message || "Kaydedilemedi");
-
+      if (!r.ok || j?.ok !== true) {
+        if (r.status === 403 && (j?.message === 'window_closed' || j?.error === 'ForbiddenException')) {
+          alert("Süre doldu. Değerlendirme penceresi maçtan sonra 24 saat.");
+        } else if (r.status === 409 && j?.message === 'rate_limit') {
+          alert("Aynı kullanıcı için en fazla 3 kez güncelleyebilirsin.");
+        } else {
+          alert(j?.message || `Kaydedilemedi (HTTP ${r.status})`);
+        }
+          setSaving(false);
+        return;
+      }
       onClose();
       onSaved?.();
       alert("Teşekkürler! Değerlendirmelerin kaydedildi.");
@@ -147,106 +215,129 @@ function RateMatchModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-neutral-900 p-4 ring-1 ring-white/10">
+      <div className="w-full max-w-4xl rounded-2xl bg-neutral-900 p-4 ring-1 ring-white/10 rate-modal">
         <div className="mb-2 text-base font-semibold">
           Oyuncuları değerlendir — {match.title ?? "Maç"}
         </div>
 
+        {/* toplu seçim */}
+        <div className="mb-2 flex items-center justify-end gap-2">
+          <button
+            onClick={() => setRows(rs => rs.map(r => ({ ...r, include: true })))}
+            className="rounded-md bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+          >
+            Tümünü seç
+          </button>
+          <button
+            onClick={() => setRows(rs => rs.map(r => ({ ...r, include: false })))}
+            className="rounded-md bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+          >
+            Hepsini kaldır
+          </button>
+        </div>
+
         <div className="max-h-[60vh] overflow-auto">
           {rows.map((row, idx) => (
-            <div
-              key={row.userId}
-              className="flex items-center justify-between gap-3 border-b border-white/5 py-2"
-            >
-              {/* Sol: kimlik + varsa pozisyon etiketi */}
-              <div className="flex min-w-[160px] items-center gap-2 text-sm">
-                <span className="truncate">{row.phone ?? row.userId.slice(0, 6)}</span>
+            <div key={row.userId} className="rate-grid border-b border-white/5 py-3">
+              {/* Sol üst: kimlik */}
+              <div className="id flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={row.include}
+                  onChange={(e) =>
+                    setRows((rs) => {
+                      const cp = [...rs];
+                      cp[idx] = { ...cp[idx], include: e.target.checked };
+                      return cp;
+                    })
+                  }
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <span className={`truncate ${row.include ? "" : "opacity-40 line-through"}`}>
+                  {row.phone ?? row.userId.slice(0, 6)}
+                </span>
                 {row.pos && (
-                  <span className="rounded-md bg-neutral-800 px-2 py-0.5 text-xs">
-                    {row.pos}
-                  </span>
+                  <span className="rounded-md bg-neutral-800 px-2 py-0.5 text-xs">{row.pos}</span>
                 )}
               </div>
 
-              {/* Orta: 5 trait yıldızı */}
-              <div className="grid flex-1 grid-cols-5 items-center gap-4 text-xs">
-                {(
-                  [
-                    "punctuality",
-                    "respect",
-                    "sportsmanship",
-                    "swearing",
-                    "aggression",
-                  ] as const
-                ).map((k) => (
-                  <div key={k} className="flex items-center gap-2">
-                    <span className="w-24">{labelFor(k)}</span>
-                    <TraitStars
-                      value={row.traits[k]}
-                      set={(n: number) =>
-                        setRows((rs) => {
-                          const cp = [...rs];
-                          cp[idx] = {
-                            ...cp[idx],
-                            traits: { ...cp[idx].traits, [k]: n },
-                          };
-                          return cp;
-                        })
-                      }
-                    />
+            {/* Sol alt: traitler (2 sütun) */}
+              <div className={`traits flex flex-wrap items-center gap-x-8 gap-y-2 text-xs ${row.include ? '' : 'pointer-events-none opacity-50'}`}>
+                {(['punctuality','respect','sportsmanship','swearing','aggression'] as const).map((k) => (
+                  <div key={k} className="inline-flex items-center whitespace-nowrap basis-1/2 sm:basis-1/3 md:basis-1/5">
+                    <span className="mr-3">
+                      {labelFor(k)}
+                    </span>
+                    <div className="shrink-0">
+                      <TraitStars
+                        value={row.traits[k]}
+                        set={(n: number) =>
+                          setRows((rs) => {
+                            const cp = [...rs];
+                            cp[idx] = { ...cp[idx], traits: { ...cp[idx].traits, [k]: n } };
+                            return cp;
+                          })
+                        }
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
 
-              {/* Sağ: mevki performansı 1..10 (pos varsa göster) */}
-              <div className="flex min-w-[210px] items-center gap-2">
+              {/* Aşağı-ortada: Oyun (1–10) */}
+              <div className={`pos w-full flex flex-col items-center gap-1 mt-4 md:mt-6 ${row.include ? '' : 'pointer-events-none opacity-50'}`}>
                 {row.pos ? (
                   <>
-                    <span className="w-24 text-xs">Oyun (1–10)</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
+                    <span className="text-xs">Oyun (1–10)</span>
+                    <ScorePills
                       value={row.posScore}
-                      onChange={(e) =>
+                      set={(n) =>
                         setRows((rs) => {
                           const cp = [...rs];
-                          cp[idx] = { ...cp[idx], posScore: Number(e.target.value) };
+                          cp[idx] = { ...cp[idx], posScore: n };
                           return cp;
                         })
                       }
-                      className="w-36"
                     />
-                    <span className="w-5 text-right text-xs">{row.posScore}</span>
-                  </>
-                ) : (
-                  <span className="text-[11px] text-neutral-500">
-                    Pozisyon bilgisi yok
-                  </span>
+                  <span className="text-xs">{row.posScore}</span>
+                </>
+              ) : (
+                <span className="text-[11px] text-neutral-500">Pozisyon bilgisi yok</span>
                 )}
               </div>
             </div>
           ))}
         </div>
 
-        <div className="mt-3 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-          >
-            Vazgeç
-          </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 disabled:opacity-50"
-          >
-            {saving ? "Kaydediliyor…" : "Kaydet"}
-          </button>
-        </div>
+        {/* Not + Butonlar aynı satırda */}
+        <div className="modal-footer">
+          <div className="text-[11px] text-neutral-400">
+            Not: Değerlendirmeler anonimdir. 24 saat içinde en fazla 3 kez güncelleyebilirsin.
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+            >
+              Vazgeç
+            </button>
 
-        <div className="mt-2 text-[11px] text-neutral-400">
-          Not: Değerlendirmeler anonimdir. 24 saat içinde en fazla 3 kez güncelleyebilirsin.
+            <button
+              onClick={save} // edit de aynı endpoint: mevcut girdiyi günceller
+              disabled={saving}
+              className="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-sky-400 disabled:opacity-50"
+            >
+              {saving ? "Kaydediliyor…" : "Düzenle"}
+            </button>
+          
+            <button
+              onClick={save}
+              disabled={saving}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 disabled:opacity-50"
+            >
+              {saving ? "Kaydediliyor…" : "Kaydet"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -312,6 +403,40 @@ function PendingRatingsBell() {
 
 
 /* ------------------ Üst Bar: Davetler (badge) ------------------ */
+function NotificationsBell() {
+  const [count, setCount] = React.useState(0);
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/notifications?unread=1`, {
+        headers: H(),
+        cache: 'no-store',
+      });
+      const j = await r.json().catch(() => ({}));
+      // { items:[...] } ya da { count: n } destekler
+      const c = Array.isArray(j?.items) ? j.items.length : (Number(j?.count) || 0);
+      setCount(c);
+    } catch {}
+  }, []);
+
+  React.useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+
+  return (
+    <Link
+      href="/notifications"
+      className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+      title="Bildirimler"
+    >
+      Bildirimler
+      {count > 0 && (
+        <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+          {count}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 function InvitesBell() {
   const [count, setCount] = React.useState(0);
 
@@ -400,9 +525,18 @@ type MatchLite = {
   time?: string | null;
   createdAt?: string;
   slots?: SlotLite[] | null;
+  inviteOnly?: boolean | null;
+  ownerId?: string | null;
+  status?: 'DRAFT' | 'OPEN' | 'CLOSED' | null;
+  closedAt?: string | null;
 };
 
-type SlotLite = { pos: string; userId?: string | null };
+type SlotLite = {
+  pos: string;
+  userId?: string | null;
+  placeholder?: 'ADMIN' | 'GUEST' | null; // ← EKLENDİ
+};
+
 
 const LEVELS = ["Kolay", "Orta", "Zor"] as const;
 const FORMATS = ["5v5", "6v6", "7v7", "8v8", "9v9", "10v10", "11v11"] as const;
@@ -656,6 +790,7 @@ function MainShell({
         <div className="text-lg font-semibold">MatchFinder</div>
         <div className="flex items-center gap-2">
           <PendingRatingsBell />
+          <NotificationsBell />
           <FriendsBell />
           <InvitesBell />
           <div className="text-xs text-neutral-400">MVP Demo</div>
@@ -716,9 +851,33 @@ function MatchesScreen() {
   const meId = me?.id ?? null;
 
   // Liste & UI
-  const [items, setItems] = React.useState<MatchLite[]>([]);
+  const [items, setItems] = React.useState<MatchLiteWithAccess[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [joining, setJoining] = React.useState<string | null>(null);
+  // -- Kilitli maça erişim isteği state'i --
+  const [requestingId, setRequestingId] = React.useState<string | null>(null);
+  const [requested, setRequested] = React.useState<Record<string, boolean>>({});
+
+  async function requestAccess(matchId: string, message?: string) {
+    const hdr = authHeader();
+    if (!hdr.Authorization) { alert("Giriş gerekli."); window.location.href = "/"; return; }
+    try {
+      setRequestingId(matchId);
+      const res = await fetch(`${API_URL}/matches/${matchId}/request-access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...hdr },
+        body: JSON.stringify({ message: message ?? "" }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${res.status}`);
+      setRequested(prev => ({ ...prev, [matchId]: true }));
+      alert("Erişim isteği gönderildi 👌");
+    } catch (e: any) {
+      alert(e?.message || "İstek gönderilemedi");
+    } finally {
+      setRequestingId(null);
+    }
+  }
 
   // 🔸 Değerlendirme modal state (YENİ)
   const [rateOpen, setRateOpen] = React.useState(false);
@@ -744,7 +903,11 @@ function MatchesScreen() {
   async function refresh() {
     setLoading(true);
     try {
-      const r = await fetch(`${API_URL}/matches`, { cache: "no-store" });
+      // 🔽 headers: H() eklendi
+      const r = await fetch(`${API_URL}/matches`, {
+        cache: "no-store",
+        headers: H(),
+      });
       const data = await r.json();
       setItems(Array.isArray(data) ? data : []);
     } catch {
@@ -753,15 +916,26 @@ function MatchesScreen() {
       setLoading(false);
     }
   }
-  React.useEffect(() => {
-    refresh();
-  }, []);
 
+  React.useEffect(() => {
+    // Sadece inviteOnly & erişimi olmayan maç varsa izle
+    const needWatch = items.some(m => m.inviteOnly && !(m as any).access?.canView);
+    if (!needWatch) return;
+
+    const t = setInterval(() => {
+      refresh(); // BE access durumunu günceller
+    }, 20000); // 20 sn
+
+    return () => clearInterval(t);
+  }, [items]);
+  
   // Yardımcılar
   function missingOf(m: any): string[] {
     const slots: any[] = Array.isArray(m?.slots) ? m.slots : [];
-    return slots.filter((s) => !s.userId).map((s) => s.pos);
+    // placeholder'lar dolu sayılır
+    return slots.filter((s) => !s.userId && !s.placeholder).map((s) => s.pos);
   }
+
   function myPos(m: any): string | null {
     const slots: any[] = Array.isArray(m?.slots) ? m.slots : [];
     const s = slots.find((s) => s.userId === meId);
@@ -775,7 +949,27 @@ function MatchesScreen() {
   }
 
   // Hızlı katıl
-  async function quickJoin(m: MatchLite) {
+  async function quickJoin(m: MatchLiteWithAccess) {
+    const isOwner = m.ownerId === meId;
+    const minePos = myPos(m);
+
+    // Kilit kontrolü: access.canView + owner + zaten katılmış olma
+    const canView = m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(minePos)) : true;
+    if (!canView) {
+      if (m.access?.requestPending || requested[m.id]) {
+        alert("Erişim isteğin onay bekliyor. Onaylanınca otomatik açılacak.");
+      } else {
+        alert("Bu maç kilitli. Admin onayı/davet gerekli. Karttan 'İstek yolla'ya tıklayın.");
+      }
+      return;
+    }
+
+    // Zaten katıldıysan direkt detay
+    if (minePos) {
+      window.location.href = `/match/${m.id}`;
+      return;
+    }
+
     setJoining(m.id);
     try {
       const hdr = authHeader();
@@ -784,6 +978,8 @@ function MatchesScreen() {
         window.location.href = "/";
         return;
       }
+
+      // token geçerli mi?
       const chk = await fetch(`${API_URL}/users/me`, { headers: { ...hdr }, cache: "no-store" });
       if (chk.status === 401) {
         clearToken();
@@ -792,38 +988,56 @@ function MatchesScreen() {
         return;
       }
 
-      // detaydan boşları çek
+      // Detay çekip boş pozisyonları bul (placeholder’ları boş sayma)
       const rDet = await fetch(`${API_URL}/matches/${m.id}`, {
         cache: "no-store",
         headers: { ...hdr },
       });
+      if (rDet.status === 403) {
+        alert("Bu maç kilitli ve erişimin yok.");
+        return;
+      }
       const det = await rDet.json().catch(() => ({}));
       const slots: any[] = Array.isArray(det?.slots) ? det.slots : [];
-      const missing: string[] = slots.filter((s: any) => !s.userId).map((s: any) => s.pos);
+      const missing: string[] = slots
+        .filter((s: any) => !s.userId && !s.placeholder)
+        .map((s: any) => s.pos);
 
-      const chosenPos = (prefs ?? []).find((p) => missing.includes(p)) ?? (missing[0] ?? null);
-      if (!chosenPos) {
+      // Hiç direkt boş yoksa pozisyon seçtirme sayfasına yönlendir
+      if (missing.length === 0) {
         window.location.href = `/match/${m.id}?selectPosition=1`;
         return;
       }
+
+      // Tercihlere göre seçim yap; yoksa ilk boş
+      const chosenPos =
+        (prefs ?? []).find((p) => missing.includes(p)) ?? missing[0];
 
       const r = await fetch(`${API_URL}/matches/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...hdr },
         body: JSON.stringify({ matchId: m.id, pos: chosenPos }),
       });
+
       if (r.status === 401) {
         clearToken();
         alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
         window.location.href = "/";
         return;
       }
+      if (r.status === 403) {
+        alert("Erişim yok. Maç kilitli olabilir.");
+        window.location.href = `/match/${m.id}`;
+        return;
+      }
+
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data?.ok === false) {
         alert(data?.message || "Katılım başarısız.");
         window.location.href = `/match/${m.id}`;
         return;
       }
+
       window.location.href = `/match/${m.id}`;
     } catch (e: any) {
       alert(e?.message || "Katılım sırasında hata.");
@@ -881,8 +1095,15 @@ function MatchesScreen() {
       );
 
       // artık map parametresini 'string' kabul ediyor
-      const players = uids.map((id) => ({ id, phone: null as string | null }));
-
+      const posMap = new Map<string, string | null>();
+      slots.forEach((s: any) => {
+        if (s?.userId) posMap.set(String(s.userId), (s.pos ?? null) as any);
+      });
+      const players = uids.map((id) => ({
+        id,
+        phone: null as string | null,
+        pos: posMap.get(id) ?? null, // <-- pozisyonu modal'a taşı
+      }));
       setRatePayload({ matchId: match.id, title: match.title, players });
       setRateOpen(true);
     } catch {
@@ -982,7 +1203,11 @@ function MatchesScreen() {
 
       <div className="space-y-3">
         {filtered.map((m) => {
+          const isOwner = m.ownerId === meId;
           const mine = myPos(m);
+          const canView =
+            m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(mine)) : true;
+          const pending = Boolean(m.access?.requestPending) || !!requested[m.id];
           const miss = missingOf(m);
           const prefHit = prefs.find((p) => miss.includes(p));
 
@@ -1011,7 +1236,18 @@ function MatchesScreen() {
               <div className="flex items-start justify-between gap-3">
                 {/* SOL */}
                 <div>
-                  <div className="text-base font-semibold">{m.title || "Maç"}</div>
+                  <div className="text-base font-semibold flex items-center gap-2">
+                    <span>{m.title || "Maç"}</span>
+                    {m.inviteOnly ? <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Kilitli</span> : null}
+                  </div>
+                  {m.status === 'DRAFT'  && (
+                    <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Taslak</span>
+                  )}
+                  {m.status === 'CLOSED' && (
+                    <span className="rounded bg-rose-600/20 px-2 py-0.5 text-xs text-rose-300 ring-1 ring-rose-500/30">
+                      Kapalı
+                    </span>
+                  )}
                   <div className="mt-1 text-xs text-neutral-300">
                     {m.location || "—"} • {m.level || "—"} • {m.format || "—"}
                     {m.time && (
@@ -1060,41 +1296,79 @@ function MatchesScreen() {
 
                 {/* SAĞ */}
                 <div className="flex items-center gap-2">
-                  {!mine ? (
-                    <button
-                      onClick={() => quickJoin(m)}
-                      disabled={joining === m.id || isFull}
-                      className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
-                      title={isFull ? "Maç Dolu" : "Katıl"}
-                    >
-                      {isFull ? "Dolu" : joining === m.id ? "Katılıyor…" : "Katıl"}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => leave(m)}
-                      className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                    >
-                      Ayrıl
-                    </button>
-                  )}
+                  {(() => {
+                    const isOwner = m.ownerId === meId;
+                    const mine = myPos(m);
 
-                  {/* 🔸 Karttan Değerlendir butonu (YENİ) */}
-                  {within24h && (
-                    <button
-                      onClick={() => openRateFor(m)}
-                      className="rounded-xl bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500"
-                      title="Bu maçı değerlendir"
-                    >
-                      Değerlendir
-                    </button>
-                  )}
+                    // kilitliyse: owner || katılımcı || BE access.canView -> görebilir
+                    // kilitli değilse: zaten görebilir
+                    const canView =
+                      m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(mine)) : true;
+                    const pending = Boolean(m.access?.requestPending) || !!requested[m.id];
 
-                  <a
-                    href={`/match/${m.id}`}
-                    className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                  >
-                    Detay
-                  </a>
+                    if (!canView) {
+                      // kilitli ve erişimi yok -> "İstek yolla" + "Detay (kilitli)"
+                      return (
+                        <>
+                          <button
+                            onClick={() => requestAccess(m.id)}
+                            disabled={pending || requestingId === m.id}
+                            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700 disabled:opacity-60"
+                          >
+                            {pending ? "İstek gönderildi" : (requestingId === m.id ? "Gönderiliyor…" : "İstek yolla")}
+                          </button>
+                          <span className="rounded-xl bg-neutral-900/60 px-3 py-1.5 text-sm text-neutral-400 opacity-60">
+                            Detay (kilitli)
+                          </span>
+                        </>
+                      );
+                    }
+                    // erişim var -> normal akış (+ 24 saat içinde "Değerlendir" butonu)
+                    return (
+                      <>
+                        {!mine ? (
+                          <button
+                            onClick={() => quickJoin(m)}
+                            disabled={joining === m.id || isFull || m.status !== 'OPEN'}
+                            className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          {m.status !== 'OPEN' ? "Kapalı" : isFull ? "Dolu" : joining === m.id ? "Katılıyor…" : "Katıl"}
+                        </button>
+                        ) : (
+                          <button
+                            onClick={() => leave(m)}
+                            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                          >
+                            Ayrıl
+                          </button>
+                        )}
+                        <a
+                          href={`/match/${m.id}`}
+                          className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                        >
+                          Detay
+                        </a>
+                        <a
+                          href={`${API_URL}/matches/${m.id}/ics`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                        >
+                          Takvime ekle
+                        </a>
+                        {/* Maç bitti ve 24 saat içindeyse; sadece owner veya katılımcı için */}
+                        {within24h && (mine || isOwner) && (
+                          <button
+                            onClick={() => openRateFor(m)}
+                            className="rounded-xl bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500"
+                            title="Bu maç için oyuncuları değerlendir"
+                          >
+                            Değerlendir
+                          </button>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

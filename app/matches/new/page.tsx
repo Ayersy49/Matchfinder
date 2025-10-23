@@ -26,6 +26,9 @@ async function safeJson<T>(res: Response): Promise<T | null> {
 
 export default function NewMatchPage() {
   const r = useRouter();
+
+  // ---- STATE (hepsi component içinde!) ----
+  const [inviteOnly, setInviteOnly] = React.useState<boolean>(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -33,7 +36,9 @@ export default function NewMatchPage() {
   const [location, setLocation] = React.useState("");
   const [time, setTime] = React.useState(""); // datetime-local
   const [level, setLevel] = React.useState<"Kolay" | "Orta" | "Zor" | "">("");
-  const [format, setFormat] = React.useState<"5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11" | "">("");
+  const [format, setFormat] = React.useState<
+    "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11" | ""
+  >("");
   const [price, setPrice] = React.useState<number | "">("");
 
   async function submit(e: React.FormEvent) {
@@ -52,6 +57,7 @@ export default function NewMatchPage() {
       level: level || null,
       format,
       price: price === "" ? null : Number(price),
+      inviteOnly,
     };
 
     try {
@@ -147,15 +153,24 @@ export default function NewMatchPage() {
               >
                 <option value="">Seç</option>
                 <option value="5v5">5v5</option>
-                <option value = "6v6">6v6</option>
+                <option value="6v6">6v6</option>
                 <option value="7v7">7v7</option>
                 <option value="8v8">8v8</option>
-                <option value= "9v9">9v9</option>
-                <option value= "10v10">10v10</option>
+                <option value="9v9">9v9</option>
+                <option value="10v10">10v10</option>
                 <option value="11v11">11v11</option>
               </select>
             </label>
           </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={inviteOnly}
+              onChange={(e) => setInviteOnly(e.target.checked)}
+            />
+            <span>Kilitli Maç (Sadece Davetle Katılım)</span>
+          </label>
 
           <label className="grid gap-1 text-sm">
             <span>Kişi Başı Ücret (₺)</span>
@@ -172,10 +187,7 @@ export default function NewMatchPage() {
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <a
-            href="/landing"  // <<< BURASI DEĞİŞTİ
-            className="rounded-xl px-3 py-2 text-sm hover:underline"
-          >
+          <a href="/landing" className="rounded-xl px-3 py-2 text-sm hover:underline">
             ← Ana ekrana dön
           </a>
           <button

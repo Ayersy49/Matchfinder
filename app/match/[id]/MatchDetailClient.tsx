@@ -5,6 +5,8 @@ import * as React from 'react';
 import Link from 'next/link';
 import { authHeader, clearToken, myId } from '@/lib/auth';
 import InviteFriendsClient from './InviteFriendsClient';
+import { Shield, UserPlus } from "lucide-react";
+
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -14,11 +16,17 @@ type Team = 'A' | 'B';
 function labelPos(p: string) {
   return p === 'SUB' ? 'Yedek' : p;
 }
+function canAdmin(m: MatchDetail | null, meId?: string | null) {
+  return !!m && !!meId && m.ownerId === meId;
+}
+function isFree(s: Slot) { return !s.userId && !s.placeholder; }
 
 type Slot = {
   team: Team;          // "A" | "B"
   pos: string;         // "GK" | "CB" | ...
   userId?: string | null;
+  placeholder?: 'ADMIN' | 'GUEST';
+  guestOfUserId?: string | null;
 };
 
 type MatchDetail = {
@@ -31,6 +39,7 @@ type MatchDetail = {
   price: number | null;
   time: string | null;
   slots: Slot[];
+  inviteOnly?: boolean | null;
 };
 
 type ChatItem = {
@@ -43,16 +52,16 @@ type ChatItem = {
   editedAt: string | null;
 };
 
-/** Önerilen oyuncu tipi (backend alan adları biraz farklı olabilir; korumalı okuyacağız) */
+/** Önerilen oyuncu tipi */
 type Recommended = {
   id: string;
   phone?: string | null;
   level?: number | null;
   positions?: string[] | null;
   distanceKm?: number | null;
-  ratingScore?: number | null;          // 0..100 (yoksa null)
+  ratingScore?: number | null;          // 0..100 (BE göndermezse null)
   risk?: 'RED' | 'YELLOW' | 'GREEN' | null; // opsiyonel
-  invited?: boolean;                    // FE’de kullanacağız
+  invited?: boolean;                    // FE’de optimistic
 };
 
 /* ===================== Yardımcılar ===================== */
@@ -65,15 +74,12 @@ function handle401(status: number) {
   }
   return false;
 }
-
 function maskPhone(p?: string | null) {
   const s = (p || '').replace(/\D/g, '');
   if (s.length < 7) return '—';
   return s.slice(0, 3) + ' *** ' + s.slice(-2);
 }
-
 function badgeForScore(score?: number | null) {
-  // 0..100 -> renk
   if (score == null) return { cls: 'bg-neutral-700 text-neutral-200', label: '—' };
   if (score >= 90) return { cls: 'bg-sky-700/70 text-sky-100', label: 'Mavi' };
   if (score >= 60) return { cls: 'bg-emerald-700/70 text-emerald-100', label: 'Yeşil' };
@@ -357,7 +363,7 @@ function MatchChat({ matchId }: { matchId: string }) {
 /* ======================= ÖNERİLEN DAVETLER ======================= */
 function RecommendedPanel({
   matchId,
-  needPos,            // 'ANY' | 'GK' | 'ST' ... (ihtiyaç)
+  needPos,            // 'ANY' | 'GK' | 'ST' ...
   team,               // 'A' | 'B' | 'ANY'
 }: {
   matchId: string;
@@ -376,10 +382,13 @@ function RecommendedPanel({
       const qs = new URLSearchParams();
       if (needPos && needPos !== 'ANY') qs.set('pos', needPos);
       if (team && team !== 'ANY') qs.set('team', team);
-      const r = await fetch(`${API_URL}/matches/${matchId}/recommended?${qs.toString()}`, {
+      // BE: /matches/:id/recommend-invites
+      const r = await fetch(`${API_URL}/matches/${matchId}/recommend-invites?${qs.toString()}`, {
         headers: { ...authHeader() },
         cache: 'no-store',
       });
+      if (r.status === 403) { setItems([]); setLoading(false); return; }
+      
       if (handle401(r.status)) return;
       const data = await r.json().catch(() => ({}));
       const arr: any[] = Array.isArray(data?.items) ? data.items : [];
@@ -389,8 +398,8 @@ function RecommendedPanel({
         level: typeof x.level === 'number' ? x.level : null,
         positions: Array.isArray(x.positions) ? x.positions : null,
         distanceKm: typeof x.distanceKm === 'number' ? x.distanceKm : null,
-        ratingScore: typeof x.ratingScore === 'number' ? x.ratingScore : null,
-        risk: (x.risk as any) ?? null,
+        ratingScore: typeof x.score === 'number' ? x.score : null, // BE 'score' alanından
+        risk: null,
         invited: Boolean(x.invited),
       }));
       setItems(mapped);
@@ -426,7 +435,6 @@ function RecommendedPanel({
       setInviting(null);
     }
   }
-
 
   return (
     <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
@@ -497,6 +505,118 @@ function RecommendedPanel({
   );
 }
 
+/* ======================= GELEN ERİŞİM İSTEKLERİ (Owner) ======================= */
+function AccessRequestsPanel({ matchId }: { matchId: string }) {
+  const [items, setItems] = React.useState<Array<{
+    id: string;
+    userId: string;
+    phone: string | null;
+    level: number | null;
+    positions: string[];
+    message: string | null;
+    createdAt: string;
+  }>>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [acting, setActing] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true); setErr(null);
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/requests`, { headers: { ...authHeader() }, cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+      const arr = Array.isArray(j?.items) ? j.items : [];
+      setItems(arr);
+    } catch (e: any) {
+      setErr(e?.message || 'İstekler alınamadı');
+    } finally {
+      setLoading(false);
+    }
+  }, [matchId]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function respond(reqId: string, action: 'APPROVE' | 'DECLINE') {
+    if (acting) return;
+    setActing(reqId);
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/requests/${reqId}/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ action }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+      setItems(prev => prev.filter(x => x.id !== reqId));
+    } catch (e: any) {
+      alert(e?.message || 'İşlem başarısız');
+    } finally {
+      setActing(null);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-sm font-semibold">Gelen erişim istekleri</div>
+        <button onClick={load} className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700">Yenile</button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-neutral-400">Yükleniyor…</div>
+      ) : err ? (
+        <div className="text-sm text-rose-400">{err}</div>
+      ) : !items.length ? (
+        <div className="text-sm text-neutral-400">Bekleyen istek yok.</div>
+      ) : (
+        <div className="space-y-2">
+          {items.map(it => (
+            <div key={it.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0f141b] px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-sm text-neutral-100">{maskPhone(it.phone)}</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
+                  {typeof it.level === 'number' ? <span>Seviye {it.level}</span> : null}
+                  {Array.isArray(it.positions) && it.positions.length ? (
+                    <span className="flex flex-wrap gap-1">
+                      {it.positions.slice(0, 3).map(p => (
+                        <span key={p} className="rounded border border-white/10 px-1.5 py-0.5">{p}</span>
+                      ))}
+                      {it.positions.length > 3 ? <span>+{it.positions.length - 3}</span> : null}
+                    </span>
+                  ) : null}
+                  {it.message ? <span className="truncate max-w-[280px] text-neutral-300">“{it.message}”</span> : null}
+                </div>
+                <div className="text-[10px] text-neutral-500">
+                  {new Date(it.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  disabled={acting === it.id}
+                  onClick={() => respond(it.id, 'APPROVE')}
+                  className="rounded bg-emerald-600 px-2 py-1 text-xs text-neutral-950 hover:bg-emerald-500 disabled:opacity-60"
+                >
+                  Onayla
+                </button>
+                <button
+                  disabled={acting === it.id}
+                  onClick={() => respond(it.id, 'DECLINE')}
+                  className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700 disabled:opacity-60"
+                >
+                  Reddet
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 /* ==================== DETAY SAYFASI ==================== */
 export default function MatchDetailClient({ id }: { id: string }) {
   const me = myId();
@@ -504,6 +624,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
   const [m, setM] = React.useState<MatchDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
+  const [locking, setLocking] = React.useState(false);
 
   // Düzenleme modal state’i
   const [editOpen, setEditOpen] = React.useState(false);
@@ -523,7 +644,15 @@ export default function MatchDetailClient({ id }: { id: string }) {
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API_URL}/matches/${id}`, { cache: 'no-store' });
+      const r = await fetch(`${API_URL}/matches/${id}`, {
+        headers: { ...authHeader() }, // <- header ekledik
+        cache: 'no-store',
+      });
+      if (r.status === 403) {
+        alert('Bu maç kilitli. Detayı sadece katılımcılar veya davetliler görebilir.');
+        window.location.href = '/landing';
+        return;
+      }
       const data = await r.json();
       const slots: Slot[] = Array.isArray(data?.slots) ? data.slots : [];
       setM({ ...data, slots });
@@ -535,9 +664,28 @@ export default function MatchDetailClient({ id }: { id: string }) {
     }
   }, [id]);
 
-  React.useEffect(() => {
-    refresh();
-  }, [refresh]);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
+
+  // --- Kilit toggle ---
+  async function toggleLock() {
+    if (!m) return;
+    try {
+      setLocking(true);
+      const res = await fetch(`${API_URL}/matches/${m.id}/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ inviteOnly: !m.inviteOnly }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.message || 'Kilit güncellenemedi');
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || 'Kilit değiştirilemedi');
+    } finally {
+      setLocking(false);
+    }
+  }
 
   // Modal açılınca mevcut değerleri forma doldur
   React.useEffect(() => {
@@ -558,34 +706,30 @@ export default function MatchDetailClient({ id }: { id: string }) {
   const teamA = (m?.slots || []).filter((s) => s.team === 'A');
   const teamB = (m?.slots || []).filter((s) => s.team === 'B');
 
-  // Doluluk / Yedek uygunluğu
+  // Doluluk / Yedek uygunluğu (placeholder dolu sayılır)
   const coreA = teamA.filter((s) => s.pos !== 'SUB');
   const coreB = teamB.filter((s) => s.pos !== 'SUB');
-  const isFullA = coreA.length > 0 && coreA.every((s) => !!s.userId);
-  const isFullB = coreB.length > 0 && coreB.every((s) => !!s.userId);
-  const canSubA = teamA.some((s) => s.pos === 'SUB' && !s.userId);
-  const canSubB = teamB.some((s) => s.pos === 'SUB' && !s.userId);
+  const isFullA = coreA.length > 0 && coreA.every((s) => !isFree(s));
+  const isFullB = coreB.length > 0 && coreB.every((s) => !isFree(s));
+  const canSubA = teamA.some((s) => s.pos === 'SUB' && isFree(s));
+  const canSubB = teamB.some((s) => s.pos === 'SUB' && isFree(s));
 
-  // İhtiyaç pozisyonu (öneriler için)
+  // İhtiyaç pozisyonu (öneriler için) — boşluk hesabı isFree ile
   function calcNeeds(slots: Slot[], team?: Team) {
     const list = slots.filter((s) => s.pos !== 'SUB' && (!team || s.team === team));
-    // pos -> boş sayısı
     const map = new Map<string, number>();
     for (const s of list) {
-      if (!s.userId) map.set(s.pos, (map.get(s.pos) || 0) + 1);
+      if (isFree(s)) map.set(s.pos, (map.get(s.pos) || 0) + 1);
     }
-    // en çok boş olandan başla
     return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([pos]) => pos);
   }
   const needA = calcNeeds(m?.slots || [], 'A');
   const needB = calcNeeds(m?.slots || [], 'B');
-  // varsayılan odak: önce A’daki eksik, yoksa B, o da yoksa 'ANY'
   const defaultNeed = (needA[0] || needB[0] || 'ANY') as string;
   const [focusPos, setFocusPos] = React.useState<string>(defaultNeed);
   const [focusTeam, setFocusTeam] = React.useState<'A' | 'B' | 'ANY'>(needA.length ? 'A' : needB.length ? 'B' : 'ANY');
 
   React.useEffect(() => {
-    // maç değişince ihtiyaçları yeniden yansıt
     setFocusPos(defaultNeed);
     setFocusTeam(needA.length ? 'A' : needB.length ? 'B' : 'ANY');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -601,6 +745,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
         body: JSON.stringify({ matchId: id, team }),
       });
       if (handle401(r.status)) return;
+      if (r.status === 403) { alert('Bu maç kilitli. Davet gerekiyor.'); return; }
 
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -628,6 +773,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
         body: JSON.stringify({ matchId: id, pos, team }),
       });
       if (handle401(r.status)) return;
+      if (r.status === 403) { alert('Bu maç kilitli. Davet gerekiyor.'); return; }
 
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.message || 'Katılım başarısız');
@@ -649,6 +795,8 @@ export default function MatchDetailClient({ id }: { id: string }) {
         body: JSON.stringify({ matchId: id, team, pos: 'SUB' }),
       });
       if (handle401(r.status)) return;
+      if (r.status === 403) { alert('Bu maç kilitli. Davet gerekiyor.'); return; }
+
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok !== true) throw new Error(j?.message || 'Katılım başarısız');
       await refresh();
@@ -673,6 +821,43 @@ export default function MatchDetailClient({ id }: { id: string }) {
       await refresh();
     } catch (e: any) {
       alert(e?.message || 'Ayrılma başarısız');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reserve(team: Team, pos: string, type: 'ADMIN' | 'GUEST') {
+    try {
+      setBusy(true);
+      const r = await fetch(`${API_URL}/matches/${m!.id}/reserve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ team, pos, type }),
+      });
+      if (handle401(r.status)) return;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok !== true) throw new Error(j?.message || 'Rezervasyon başarısız');
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || 'Rezervasyon başarısız');
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function unreserve(team: Team, pos: string) {
+    try {
+      setBusy(true);
+      const r = await fetch(`${API_URL}/matches/${m!.id}/reserve/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ team, pos }),
+      });
+      if (handle401(r.status)) return;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok !== true) throw new Error(j?.message || 'Rezerv kaldırma başarısız');
+      await refresh();
+    } catch (e: any) {
+      alert(e?.message || 'Rezerv kaldırma başarısız');
     } finally {
       setBusy(false);
     }
@@ -735,10 +920,15 @@ export default function MatchDetailClient({ id }: { id: string }) {
           >
             ← Ana menü
           </Link>
-          <div className="text-base font-semibold">{m.title || 'Maç'}</div>
+          <div className="text-base font-semibold flex items-center gap-2">
+            <span>{m.title || 'Maç'}</span>
+            {m.inviteOnly ? (
+              <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Kilitli</span>
+            ) : null}
+          </div>
         </div>
 
-        {/* Sağ taraf: Arkadaşlar + Davetler + (opsiyonel) Düzenle */}
+        {/* Sağ taraf: Arkadaşlar + Davetler + (opsiyonel) Düzenle + Kilit */}
         <div className="flex items-center gap-2">
           <Link
             href="/friends"
@@ -757,12 +947,22 @@ export default function MatchDetailClient({ id }: { id: string }) {
           </Link>
 
           {isOwner && (
-            <button
-              onClick={() => setEditOpen(true)}
-              className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-            >
-              Düzenle
-            </button>
+            <>
+              <button
+                onClick={() => setEditOpen(true)}
+                className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+              >
+                Düzenle
+              </button>
+              <button
+                onClick={toggleLock}
+                disabled={locking}
+                className={`rounded-xl px-3 py-1.5 text-sm ${m.inviteOnly ? 'bg-rose-700 hover:bg-rose-600' : 'bg-neutral-800 hover:bg-neutral-700'}`}
+                title="Kilit: Sadece davetle katılım"
+              >
+                {locking ? '...' : m.inviteOnly ? 'Kilit Aç' : 'Kilit Kapat'}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -858,31 +1058,71 @@ export default function MatchDetailClient({ id }: { id: string }) {
           <div className="flex flex-wrap gap-2">
             {teamA.map((s, idx) => {
               const isMine = s.userId === me;
-              const isEmpty = !s.userId;
-              const classes = [
-                'rounded-full px-3 py-1 text-sm border select-none',
-                isMine
-                  ? 'border-emerald-400 text-emerald-400'
-                  : isEmpty
-                  ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
-                  : 'border-white/10 text-white/40',
-              ].join(' ');
+              const isEmpty = isFree(s);
+
+              const badgeIcon =
+                s.placeholder === 'ADMIN'
+                  ? <Shield className="ml-1 size-3.5 opacity-80" aria-label="Admin rezervi" />
+                  : s.placeholder === 'GUEST'
+                  ? <UserPlus className="ml-1 size-3.5 opacity-80" aria-label="Misafir (+1)" />
+                  : null;
+
+
+              const baseCls = 'rounded-full px-3 py-1 text-sm border select-none inline-flex items-center gap-2';
+              const stateCls = isMine
+                ? 'border-emerald-400 text-emerald-400'
+                : isEmpty
+                ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
+                : 'border-white/10 text-white/40';
+
               return (
                 <span
                   key={`A-${idx}-${s.pos}`}
-                  className={classes}
+                  className={`${baseCls} ${stateCls}`}
                   title={
                     isMine
                       ? 'Senin pozisyonun'
                       : isEmpty
-                      ? 'Boş — tıkla ve bu pozisyona katıl'
-                      : 'Dolu'
+                        ? 'Boş — tıkla'
+                        : s.placeholder === 'ADMIN'
+                          ? 'Admin rezervi'
+                          : s.placeholder === 'GUEST'
+                            ? 'Misafir rezervi (+1)'
+                            : 'Dolu'
                   }
-                  onClick={() => {
-                    if (isEmpty && !mySlot && !busy) joinSpecific('A', s.pos);
-                  }}
+
+                  onClick={() => { if (isEmpty && !mySlot && !busy) joinSpecific('A', s.pos); }}
                 >
                   {labelPos(s.pos)}
+                  {badgeIcon}
+
+                  {isEmpty ? (
+                    <span className="ml-2 inline-flex gap-1">
+                      {canAdmin(m, me) && (
+                        <button
+                          title="Admin rezervi"
+                          className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
+                          onClick={(e) => { e.stopPropagation(); reserve('A', s.pos, 'ADMIN'); }}
+                        >
+                          <Shield className="size-3.5" />
+                        </button>
+                      )}
+                        <button
+                          title="Misafir rezervi (+1)"
+                          className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
+                          onClick={(e) => { e.stopPropagation(); reserve('A', s.pos, 'GUEST'); }}
+                        >
+                          <UserPlus className="size-3.5" />
+                        </button>
+                      </span>
+                    ) : s.placeholder ? (
+                      <button
+                        className="ml-2 text-[10px] underline"
+                        onClick={(e) => { e.stopPropagation(); unreserve('A', s.pos); }}
+                      >
+                        Kaldır
+                      </button>
+                  ) : null}
                 </span>
               );
             })}
@@ -895,31 +1135,69 @@ export default function MatchDetailClient({ id }: { id: string }) {
           <div className="flex flex-wrap gap-2">
             {teamB.map((s, idx) => {
               const isMine = s.userId === me;
-              const isEmpty = !s.userId;
-              const classes = [
-                'rounded-full px-3 py-1 text-sm border select-none',
-                isMine
-                  ? 'border-emerald-400 text-emerald-400'
-                  : isEmpty
-                  ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
-                  : 'border-white/10 text-white/40',
-              ].join(' ');
+              const isEmpty = isFree(s);
+
+              const badgeIcon =
+                s.placeholder === 'ADMIN'
+                  ? <Shield className="ml-1 size-3.5 opacity-80" aria-label="Admin rezervi" />
+                  : s.placeholder === 'GUEST'
+                  ? <UserPlus className="ml-1 size-3.5 opacity-80" aria-label="Misafir (+1)" />
+                  : null;
+
+              const baseCls = 'rounded-full px-3 py-1 text-sm border select-none inline-flex items-center gap-2';
+              const stateCls = isMine
+                ? 'border-emerald-400 text-emerald-400'
+                : isEmpty
+                ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
+                : 'border-white/10 text-white/40';
+
               return (
                 <span
                   key={`B-${idx}-${s.pos}`}
-                  className={classes}
+                  className={`${baseCls} ${stateCls}`}
                   title={
                     isMine
                       ? 'Senin pozisyonun'
                       : isEmpty
-                      ? 'Boş — tıkla ve bu pozisyona katıl'
-                      : 'Dolu'
+                        ? 'Boş — tıkla'
+                        : s.placeholder === 'ADMIN'
+                          ? 'Admin rezervi'
+                          : s.placeholder === 'GUEST'
+                            ? 'Misafir rezervi (+1)'
+                            : 'Dolu'
                   }
-                  onClick={() => {
-                    if (isEmpty && !mySlot && !busy) joinSpecific('B', s.pos);
-                  }}
+                  onClick={() => { if (isEmpty && !mySlot && !busy) joinSpecific('B', s.pos); }}
                 >
                   {labelPos(s.pos)}
+                  {badgeIcon}
+
+                  {isEmpty ? (
+                    <span className="ml-2 inline-flex gap-1">
+                      {canAdmin(m, me) && (
+                        <button
+                          title="Admin rezervi"
+                          className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
+                          onClick={(e) => { e.stopPropagation(); reserve('B', s.pos, 'ADMIN'); }}
+                        >
+                          <Shield className="size-3.5" />
+                        </button>
+                      )}
+                      <button
+                        title="Misafir rezervi (+1)"
+                        className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
+                        onClick={(e) => { e.stopPropagation(); reserve('B', s.pos, 'GUEST'); }}
+                      >
+                        <UserPlus className="size-3.5" />
+                      </button>
+                    </span>
+                  ) : s.placeholder ? (
+                    <button
+                      className="ml-2 text-[10px] underline"
+                      onClick={(e) => { e.stopPropagation(); unreserve('B', s.pos); }}
+                    >
+                      Kaldır
+                    </button>
+                  ) : null}
                 </span>
               );
             })}
@@ -1002,6 +1280,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
 
       {/* Davet mini + Önerilenler + modal + Sohbet */}
       <InviteMini matchId={m.id} onOpenInvite={() => setInviteOpen(true)} />
+      {isOwner ? <AccessRequestsPanel matchId={m.id} /> : null}
 
       {/* İhtiyaç seçiciler */}
       <div className="flex flex-wrap items-center gap-2">

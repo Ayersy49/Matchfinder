@@ -4,11 +4,23 @@ import React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMe } from "@/lib/useMe";
+import { authHeader } from "@/lib/auth";
+
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-type Slot = { pos: string; userId?: string | null };
-type MatchDetail = { id: string; slots?: Slot[] };
+type Slot = {
+  pos: string;
+  userId?: string | null;
+  placeholder?: 'ADMIN' | 'GUEST' | null;
+  guestOfUserId?: string | null;
+};
+
+type MatchDetail = {
+  id: string;
+  slots?: Slot[];
+  inviteOnly?: boolean | null;
+};
 
 type MatchLite = {
   id: string;
@@ -18,6 +30,7 @@ type MatchLite = {
   format?: "5v5" | "7v7" | "8v8" | "11v11" | string | null;
   price?: number | null;
   time?: string | null; // ISO
+  inviteOnly?: boolean | null;
 };
 
 const POSITIONS = ["GK","LB","CB","RB","LWB","RWB","DM","CM","AM","LW","RW","ST"] as const;
@@ -51,6 +64,30 @@ export default function MatchesPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [joiningId, setJoiningId] = React.useState<string | null>(null);
 
+  // -- İstek yolla state'i --
+  const [requestingId, setRequestingId] = React.useState<string | null>(null);
+  const [requested, setRequested] = React.useState<Record<string, boolean>>({});
+
+  async function requestAccess(matchId: string, message?: string) {
+    const token = getToken();
+    if (!token) { alert("Giriş gerekli."); r.push("/"); return; }
+    try {
+      setRequestingId(matchId);
+      const res = await fetch(`${API_URL}/matches/${matchId}/request-access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message: message ?? "" }),
+      });
+      const j = await safeJson<any>(res);
+      if (!res.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${res.status}`);
+      setRequested(prev => ({ ...prev, [matchId]: true }));
+      alert("Erişim isteği gönderildi!");
+    } catch (e: any) {
+      alert(e?.message || "İstek gönderilemedi");
+    } finally {
+      setRequestingId(null);
+    } 
+  }
   // Filtreler
   const [level, setLevel] = React.useState<"" | "Kolay" | "Orta" | "Zor">("");
   const [format, setFormat] = React.useState<"" | "5v5" | "7v7" | "8v8" | "11v11">("");
@@ -65,7 +102,7 @@ export default function MatchesPage() {
     try {
       const res = await fetch(`${API_URL}/matches`, {
         cache: "no-store",
-        headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+        headers: { ...authHeader() },
       });
       const json = await safeJson<MatchLite[]>(res);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -125,7 +162,7 @@ export default function MatchesPage() {
     const defined = slots.length ? Array.from(new Set(slots.map((s) => s.pos))) : POSITIONS.slice();
     const missing: string[] = [];
     for (const p of defined) {
-      const hasFree = slots.some((s) => s.pos === p && !s.userId);
+      const hasFree = slots.some((s) => s.pos === p && !s.userId && !s.placeholder);
       if (hasFree) missing.push(p as string);
     }
     return missing;
@@ -136,12 +173,24 @@ export default function MatchesPage() {
       localStorage.getItem("token") ||
       localStorage.getItem("access_token") ||
       localStorage.getItem("jwt");
-    if (!token) { alert("Oturum gerekli. Lütfen giriş yapın."); r.push("/landing"); return; }
+
+    if (!token) {
+      alert("Oturum gerekli. Lütfen giriş yapın.");
+      r.push("/landing");
+      return;
+    }
+
+    // 1) Listedeki kayıttan inviteOnly kontrolü
+    const m = items.find((x) => x.id === matchId);
+    if (m?.inviteOnly) {
+      alert("Bu maç kilitli. Admin onayı/davet gerekli.");
+      return;
+    }
 
     setJoiningId(matchId);
 
     try {
-      // Detay cache'te yoksa getir
+      // 2) Detay yoksa çek (inviteOnly fallback’i)
       let detail = details[matchId];
       if (!detail) {
         const dRes = await fetch(`${API_URL}/matches/${matchId}`, {
@@ -151,34 +200,55 @@ export default function MatchesPage() {
         detail = (await safeJson<MatchDetail>(dRes)) ?? { id: matchId, slots: [] };
       }
 
+      // Detaydan da kilit kontrolü (liste güncel olmayabilir)
+      if (detail?.inviteOnly) {
+        alert("Bu maç kilitli. Admin onayı/davet gerekli.");
+        return;
+      }
+
+      // 3) Boş slotlar (placeholder’ları da dolu say!)
       const slots = detail.slots ?? [];
-      const missing = slots.filter((s) => !s.userId).map((s) => s.pos);
+      const isFree = (s: any) => !s.userId && !s.placeholder;
+      const missing = slots.filter(isFree).map((s) => s.pos?.toUpperCase());
 
-      // Sadece ilk 3 tercihten uygun olanı dene
+      // 4) Sadece ilk 3 tercihten uygun olanı dene
       const myTop3: string[] = Array.isArray(me?.positions) ? (me!.positions as string[]) : [];
-      const chosen = myTop3.find((p) => missing.includes(p)) || null;
+      const top3Upper = myTop3.map((p) => String(p).toUpperCase());
+      const chosen = top3Upper.find((p) => missing.includes(p)) || null;
 
-      // Tercihlerden hiçbiri boş değil → detaya
+      // Tercihlerden hiçbiri boş değil → detaya yönlendir
       if (!chosen) {
         r.push(`/match/${matchId}`);
         return;
       }
 
-      // Katıl
+      // 5) Katıl
       const jRes = await fetch(`${API_URL}/matches/join`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ matchId, pos: chosen }),
       });
 
       const data = await safeJson<any>(jRes);
-      if (jRes.status === 409) { r.push(`/match/${matchId}`); return; }
-      if (!jRes.ok || data?.ok === false) throw new Error(data?.message || `HTTP ${jRes.status}`);
 
-      // Başarılıysa yine detaya (katıldığı pozisyonu görsün)
+      // Kilitli maç hata kodu
+      if (jRes.status === 403) {
+        alert("Bu maç kilitli. Davet gerekiyor.");
+        r.push(`/landing`);
+        return;
+      }
+
+      // Slot yarışı / dolu hali
+      if (jRes.status === 409) {
+        r.push(`/match/${matchId}`);
+        return;
+      }
+
+      if (!jRes.ok || data?.ok === false) {
+        throw new Error(data?.message || `HTTP ${jRes.status}`);
+      }
+
+      // Başarılı → detaya
       r.push(`/match/${matchId}`);
     } catch (e: any) {
       alert(e?.message || "Katılma sırasında hata.");
@@ -187,7 +257,6 @@ export default function MatchesPage() {
       setJoiningId(null);
     }
   }
-
 
   async function quickLeave(matchId: string) {
     if (!getToken()) { r.push("/landing"); return; }
@@ -276,7 +345,12 @@ export default function MatchesPage() {
             <div key={m.id} className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="truncate text-lg font-medium">{m.title ?? "—"}</div>
+                  <div className="truncate text-lg font-medium flex items-center gap-2">
+                    <span className="truncate">{m.title ?? "—"}</span>
+                    {m.inviteOnly ? (
+                      <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Kilitli</span>
+                    ) : null}
+                  </div>
                   <div className="mt-1 text-xs text-neutral-400">
                     {[m.location || "Konum yok", m.level || "Seviye yok", m.format || ""]
                       .filter(Boolean).join(" • ")}
@@ -306,26 +380,44 @@ export default function MatchesPage() {
               </div>
 
               <div className="mt-3 flex gap-2">
-                {myPos ? (
-                  <button
-                    onClick={() => quickLeave(m.id)}
-                    disabled={joiningId === m.id}
-                    className="rounded-xl bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-60"
-                  >
-                    Ayrıl
-                  </button>
+                {m.inviteOnly && !myPos ? (
+                  <>
+                    <button
+                      onClick={() => requestAccess(m.id)}
+                      disabled={!!requested[m.id] || requestingId === m.id}
+                      className="rounded-xl bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-60"
+                      title="Maç kilitli, admin onayı gerekir"
+                    >
+                      {requested[m.id] ? "İstek gönderildi" : (requestingId === m.id ? "Gönderiliyor…" : "İstek yolla")}
+                    </button>
+                    <span className="rounded-xl bg-neutral-900/60 px-3 py-1 text-sm text-neutral-400 opacity-60">
+                      Detay (Kilitli.)
+                    </span>
+                  </>
                 ) : (
-                  <button
-                    onClick={() => quickJoin(m.id)}
-                    disabled={joiningId === m.id}
-                    className="rounded-xl bg-emerald-600 px-3 py-1 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-60"
-                  >
-                    {joiningId === m.id ? "Katılıyor…" : "Katıl"}
-                  </button>
+                  <>
+                    {myPos ? (
+                      <button
+                        onClick={() => quickLeave(m.id)}
+                        disabled={joiningId === m.id}
+                        className="rounded-xl bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-60"
+                      >
+                        Ayrıl
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => quickJoin(m.id)}
+                        disabled={joiningId === m.id}
+                        className="rounded-xl bg-emerald-600 px-3 py-1 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+                      >
+                        {joiningId === m.id ? "Katılıyor…" : "Katıl"}
+                      </button>
+                    )}
+                    <Link href={`/match/${m.id}`} className="rounded-xl bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700">
+                      Detay
+                    </Link>
+                  </>
                 )}
-                <Link href={`/match/${m.id}`} className="rounded-xl bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700">
-                  Detay
-                </Link>
               </div>
             </div>
           );
