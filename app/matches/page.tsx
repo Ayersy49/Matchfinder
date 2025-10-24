@@ -35,6 +35,24 @@ type MatchLite = {
 
 const POSITIONS = ["GK","LB","CB","RB","LWB","RWB","DM","CM","AM","LW","RW","ST"] as const;
 
+
+function Badge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium tracking-wide">
+      {children}
+    </span>
+  );
+}
+
+function StatPill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-lg bg-neutral-800/80 px-2.5 py-1 text-xs">
+      {children}
+    </span>
+  );
+}
+
+
 async function safeJson<T>(res: Response): Promise<T | null> {
   const txt = await res.text();
   if (!txt) return null;

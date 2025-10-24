@@ -28,6 +28,9 @@ type Me = {
   level: number;
   createdAt?: string | null;
   updatedAt?: string | null;
+  posLocked?: string [];
+  topPositions?: string [];
+  top3WithLevels?: { pos: string; level: number } [];
 };
 
 function normalizeMe(data: any): Me {

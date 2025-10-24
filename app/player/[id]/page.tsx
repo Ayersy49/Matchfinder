@@ -3,6 +3,8 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import FooterTabs from "@/components/FooterTabs";
+
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 

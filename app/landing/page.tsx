@@ -1,11 +1,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, UserRound, Shield, LogIn, Footprints, Star as IconStar } from "lucide-react";
+import { CalendarDays, Repeat, ListCheck, Layers, Trophy, UserRound, Shield, LogIn, Footprints, Star as IconStar } from "lucide-react";
 import { useMe } from "@/lib/useMe";
 import Link from "next/link";
 import { authHeader, clearToken, getToken, setToken } from "@/lib/auth";
 import AvailabilityEditor from "../profil/AvailabilityEditor";
+import { useRouter, useSearchParams } from "next/navigation";
+
+
 
 
 type AccessInfo = {
@@ -25,25 +28,67 @@ const H = (): HeadersInit => (authHeader() as unknown as HeadersInit);
 
 /* =================== Rating Pending Bell + Modal =================== */
 
-function RateStar({filled=false,onClick}:{filled?:boolean;onClick?:()=>void}) {
+/* =================== Renkli yıldızlar =================== */
+function colorToneFromValue(value: number) {
+  // 5 → mavi, 4–3 → yeşil, 2 → sarı, 1 → kırmızı
+  if (value >= 5) return "text-sky-400";
+  if (value >= 3) return "text-emerald-400";
+  if (value === 2) return "text-amber-400";
+  return "text-rose-500";
+}
+
+function RateStar({
+  filled = false,
+  tone,
+  onClick,
+  disabled = false,
+}: {
+  filled?: boolean;
+  tone: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <span
-      onClick={onClick}
-      className={`inline-block leading-none text-base cursor-pointer ${filled ? 'text-emerald-400' : 'text-zinc-500'}`}
+      role="button"
+      aria-hidden="true"
+      onClick={disabled ? undefined : onClick}
+      className={[
+        "select-none text-lg",
+        disabled ? "cursor-default opacity-40" : "cursor-pointer hover:scale-110 transition-transform",
+        filled ? tone : "text-neutral-500/40",
+      ].join(" ")}
     >
       ★
     </span>
   );
 }
-function TraitStars({value,set}:{value:number,set:(n:number)=>void}) {
+
+function TraitStars({
+  value,
+  set,
+  disabled = false,
+}: {
+  value: number;
+  set: (n: number) => void;
+  disabled?: boolean;
+}) {
+  const tone = colorToneFromValue(value);
   return (
     <div className="flex items-center gap-1">
-      {[1,2,3,4,5].map(n=>(
-        <RateStar key={n} filled={value>=n} onClick={()=>set(n)} />
+      {[1, 2, 3, 4, 5].map((n) => (
+        <RateStar
+          key={n}
+          filled={value >= n}
+          tone={tone}
+          onClick={() => set(n)}
+          disabled={disabled}
+        />
       ))}
     </div>
   );
 }
+
 
 function ScorePills({
   value,
@@ -114,15 +159,31 @@ function RateMatchModal({
 }: {
   open: boolean;
   onClose: () => void;
-  match: any;
+  match: any;            // { matchId, title, players: [{id,phone,pos?}] }
   onSaved?: () => void;
 }) {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+  // kalan haklar (rateeId -> 0..3). Kayıt yoksa FE 3 varsayar.
+  const [remaining, setRemaining] = React.useState<Record<string, number>>({});
+
+  React.useEffect(() => {
+    if (!open || !match?.matchId) return;
+    const hdr = authHeader();
+    fetch(`${API_URL}/ratings/${match.matchId}/remaining`, {
+      headers: { ...(hdr as any) },
+      cache: "no-store",
+    })
+      .then((r) => r.json())
+      .then((j) => setRemaining(j?.remaining ?? {}))
+      .catch(() => setRemaining({}));
+  }, [open, match?.matchId, API_URL]);
+
   const [rows, setRows] = React.useState<
     Array<{
       userId: string;
       phone?: string | null;
-      pos?: string | null; // BE pending cevabında varsa gelir
+      pos?: string | null;
       include: boolean;
       traits: {
         punctuality: number;
@@ -131,7 +192,7 @@ function RateMatchModal({
         swearing: number;
         aggression: number;
       };
-      posScore: number; // 1..10 (mevki performansı)
+      posScore: number; // 1..10
     }>
   >([]);
   const [saving, setSaving] = React.useState(false);
@@ -144,7 +205,7 @@ function RateMatchModal({
       list.map((p: any) => ({
         userId: String(p.id),
         phone: p.phone ?? null,
-        pos: p.pos ?? null, // varsa gösteririz
+        pos: p.pos ?? null,
         include: true,
         traits: {
           punctuality: 3,
@@ -153,57 +214,72 @@ function RateMatchModal({
           swearing: 3,
           aggression: 3,
         },
-        posScore: 7, // 1..10 başlangıç
+        posScore: 7,
       }))
     );
   }, [open, match]);
 
-  
-  // Kaydet (BACKEND: POST /ratings/:matchId/submit  { items: [...] })
+  // Kaydet: kilitli oyuncuları gönderme + kalan hakları güncelle
   async function save() {
     try {
       setSaving(true);
-      const selected = rows.filter((r) => r.include);
-      if (selected.length === 0) {
-        alert("Kimse seçilmedi.");
+
+      const selectable = rows.filter(
+        (r) => r.include && (remaining[r.userId] ?? 3) > 0
+      );
+      if (selectable.length === 0) {
+        alert("Kilitli/çıkarılmış oyuncular nedeniyle gönderilecek kayıt yok.");
         setSaving(false);
         return;
       }
 
-      const items = selected.map((r) => ({
+      const items = selectable.map((r) => ({
         rateeId: r.userId,
         pos: r.pos ?? undefined,
-        posScore: r.pos ? Math.max(1, Math.min(10, Math.round(Number(r.posScore)))) : undefined,
+        posScore: r.pos
+          ? Math.max(1, Math.min(10, Math.round(Number(r.posScore))))
+          : undefined,
         traits: {
           punctuality: r.traits.punctuality,
           respect: r.traits.respect,
-          sports: r.traits.sportsmanship, // FE->BE anahtar dönüşümü
+          sports: r.traits.sportsmanship, // FE -> BE alias
           swearing: r.traits.swearing,
           aggression: r.traits.aggression,
         },
       }));
-      
+
       const endpoint = `${API_URL}/ratings/${match.matchId}/submit`;
       const r = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(H() as any) },
+        headers: {
+          "Content-Type": "application/json",
+          ...(H() as any), // dosyada zaten const H = () => authHeader()
+        },
         body: JSON.stringify({ items }),
       });
+
       const j = await r.json().catch(() => ({}));
+
+      // BE'den gelen kalan hakları merge et
+      if (j?.remaining && typeof j.remaining === "object") {
+        setRemaining((prev) => ({ ...prev, ...j.remaining }));
+      }
+
       if (!r.ok || j?.ok !== true) {
-        if (r.status === 403 && (j?.message === 'window_closed' || j?.error === 'ForbiddenException')) {
+        if (r.status === 403 && (j?.message === "window_closed" || j?.error === "ForbiddenException")) {
           alert("Süre doldu. Değerlendirme penceresi maçtan sonra 24 saat.");
-        } else if (r.status === 409 && j?.message === 'rate_limit') {
-          alert("Aynı kullanıcı için en fazla 3 kez güncelleyebilirsin.");
+        } else if (r.status === 409 && j?.message === "rate_limit") {
+          alert("Aynı oyuncu için en fazla 3 kez düzenleyebilirsin.");
         } else {
           alert(j?.message || `Kaydedilemedi (HTTP ${r.status})`);
         }
-          setSaving(false);
+        setSaving(false);
         return;
       }
-      onClose();
+
       onSaved?.();
-      alert("Teşekkürler! Değerlendirmelerin kaydedildi.");
+      onClose();
+      alert("Teşekkürler! Değerlendirmen kaydedildi.");
     } catch (e: any) {
       alert(e?.message || "Hata");
     } finally {
@@ -223,13 +299,20 @@ function RateMatchModal({
         {/* toplu seçim */}
         <div className="mb-2 flex items-center justify-end gap-2">
           <button
-            onClick={() => setRows(rs => rs.map(r => ({ ...r, include: true })))}
+            onClick={() =>
+              setRows((rs) =>
+                rs.map((r) => ({
+                  ...r,
+                  include: (remaining[r.userId] ?? 3) > 0, // kilitli olanlar seçilmesin
+                }))
+              )
+            }
             className="rounded-md bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
           >
             Tümünü seç
           </button>
           <button
-            onClick={() => setRows(rs => rs.map(r => ({ ...r, include: false })))}
+            onClick={() => setRows((rs) => rs.map((r) => ({ ...r, include: false })))}
             className="rounded-md bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
           >
             Hepsini kaldır
@@ -237,80 +320,100 @@ function RateMatchModal({
         </div>
 
         <div className="max-h-[60vh] overflow-auto">
-          {rows.map((row, idx) => (
-            <div key={row.userId} className="rate-grid border-b border-white/5 py-3">
-              {/* Sol üst: kimlik */}
-              <div className="id flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={row.include}
-                  onChange={(e) =>
-                    setRows((rs) => {
-                      const cp = [...rs];
-                      cp[idx] = { ...cp[idx], include: e.target.checked };
-                      return cp;
-                    })
-                  }
-                  className="h-4 w-4 accent-emerald-500"
-                />
-                <span className={`truncate ${row.include ? "" : "opacity-40 line-through"}`}>
-                  {row.phone ?? row.userId.slice(0, 6)}
-                </span>
-                {row.pos && (
-                  <span className="rounded-md bg-neutral-800 px-2 py-0.5 text-xs">{row.pos}</span>
-                )}
-              </div>
-
-            {/* Sol alt: traitler (2 sütun) */}
-              <div className={`traits flex flex-wrap items-center gap-x-8 gap-y-2 text-xs ${row.include ? '' : 'pointer-events-none opacity-50'}`}>
-                {(['punctuality','respect','sportsmanship','swearing','aggression'] as const).map((k) => (
-                  <div key={k} className="inline-flex items-center whitespace-nowrap basis-1/2 sm:basis-1/3 md:basis-1/5">
-                    <span className="mr-3">
-                      {labelFor(k)}
+          {rows.map((row, idx) => {
+            const rLeft = remaining[row.userId] ?? 3;
+            const disabled = !row.include || rLeft <= 0;
+            return (
+              <div key={row.userId} className="rate-grid border-b border-white/5 py-3">
+                {/* Sol üst: kimlik */}
+                <div className="id flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={row.include}
+                    onChange={(e) =>
+                      setRows((rs) => {
+                        const cp = [...rs];
+                        cp[idx] = { ...cp[idx], include: e.target.checked };
+                        return cp;
+                      })
+                    }
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                  <span className={`truncate ${row.include ? "" : "opacity-40 line-through"}`}>
+                    {row.phone ?? row.userId.slice(0, 6)}
+                  </span>
+                  {row.pos && (
+                    <span className="rounded-md bg-neutral-800 px-2 py-0.5 text-xs">
+                      {row.pos}
                     </span>
-                    <div className="shrink-0">
-                      <TraitStars
-                        value={row.traits[k]}
-                        set={(n: number) =>
+                  )}
+                </div>
+
+                {/* Kalan hak notu */}
+                <div className="mt-1 text-xs text-neutral-400">
+                  Bu oyuncu için değerlendirmeni <b>{rLeft}</b> düzenleme hakkın kaldı.
+                  {rLeft <= 0 && <span className="text-red-400"> • Kilitli</span>}
+                </div>
+
+                {/* Traitler */}
+                <div
+                  className={`traits mt-2 flex flex-wrap items-center gap-x-8 gap-y-2 text-xs ${
+                    disabled ? "pointer-events-none opacity-50" : ""
+                  }`}
+                >
+                  {(
+                    ["punctuality", "respect", "sportsmanship", "swearing", "aggression"] as const
+                  ).map((k) => (
+                    <div
+                      key={k}
+                      className="inline-flex items-center whitespace-nowrap basis-1/2 sm:basis-1/3 md:basis-1/5"
+                    >
+                      <span className="mr-3">{labelFor(k)}</span>
+                      <div className="shrink-0">
+                        <TraitStars
+                          value={row.traits[k]}
+                          set={(n: number) =>
+                            setRows((rs) => {
+                              const cp = [...rs];
+                              cp[idx] = { ...cp[idx], traits: { ...cp[idx].traits, [k]: n } };
+                              return cp;
+                            })
+                            
+                          }
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Oyun (1–10) */}
+                <div className={`pos mt-4 flex w-full flex-col items-center gap-1 ${disabled ? "pointer-events-none opacity-50" : ""}`}>
+                  {row.pos ? (
+                    <>
+                      <span className="text-xs">Oyun (1–10)</span>
+                      <ScorePills
+                        value={row.posScore}
+                        set={(n) =>
                           setRows((rs) => {
                             const cp = [...rs];
-                            cp[idx] = { ...cp[idx], traits: { ...cp[idx].traits, [k]: n } };
+                            cp[idx] = { ...cp[idx], posScore: n };
                             return cp;
                           })
                         }
                       />
-                    </div>
-                  </div>
-                ))}
+                      <span className="text-xs">{row.posScore}</span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] text-neutral-500">Pozisyon bilgisi yok</span>
+                  )}
+                </div>
               </div>
-
-              {/* Aşağı-ortada: Oyun (1–10) */}
-              <div className={`pos w-full flex flex-col items-center gap-1 mt-4 md:mt-6 ${row.include ? '' : 'pointer-events-none opacity-50'}`}>
-                {row.pos ? (
-                  <>
-                    <span className="text-xs">Oyun (1–10)</span>
-                    <ScorePills
-                      value={row.posScore}
-                      set={(n) =>
-                        setRows((rs) => {
-                          const cp = [...rs];
-                          cp[idx] = { ...cp[idx], posScore: n };
-                          return cp;
-                        })
-                      }
-                    />
-                  <span className="text-xs">{row.posScore}</span>
-                </>
-              ) : (
-                <span className="text-[11px] text-neutral-500">Pozisyon bilgisi yok</span>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* Not + Butonlar aynı satırda */}
-        <div className="modal-footer">
+        {/* Not + Butonlar */}
+        <div className="modal-footer mt-3 flex items-center justify-between gap-3">
           <div className="text-[11px] text-neutral-400">
             Not: Değerlendirmeler anonimdir. 24 saat içinde en fazla 3 kez güncelleyebilirsin.
           </div>
@@ -321,19 +424,10 @@ function RateMatchModal({
             >
               Vazgeç
             </button>
-
-            <button
-              onClick={save} // edit de aynı endpoint: mevcut girdiyi günceller
-              disabled={saving}
-              className="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-sky-400 disabled:opacity-50"
-            >
-              {saving ? "Kaydediliyor…" : "Düzenle"}
-            </button>
-          
             <button
               onClick={save}
               disabled={saving}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 disabled:opacity-50"
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 disabled:opacity-50 hover:bg-emerald-500"
             >
               {saving ? "Kaydediliyor…" : "Kaydet"}
             </button>
@@ -614,6 +708,18 @@ export default function Page() {
 
   const [activeTab, setActiveTab] = useState<"matches" | "profile" | "player">("matches");
 
+  // URL'den ?tab=... oku ve state'i senkronla (matches|profile|player)
+  const sp = useSearchParams();
+  useEffect(() => {
+    const t = sp.get("tab");
+    if (t === "matches" || t === "profile" || t === "player") {
+      setActiveTab(t as any);
+    } else {
+      setActiveTab("matches");
+    }
+  }, [sp]);
+
+
   return (
     <div className="min-h-dvh bg-neutral-950 text-white">
       {!authed ? (
@@ -784,6 +890,11 @@ function MainShell({
   activeTab: "matches" | "profile" | "player";
   onTab: (t: any) => void;
 }) {
+  const router = useRouter();
+  const onTabNav = (t: 'matches'|'profile'|'player') => {
+    onTab(t);
+    router.replace(`/landing?tab=${t}`);
+  };
   return (
     <div className="relative min-h-dvh pb-24">
       <header className="sticky top-0 z-20 flex items-center justify-between bg-neutral-950/80 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
@@ -809,19 +920,27 @@ function MainShell({
             icon={<CalendarDays className="size-5" />}
             label="Maçlar"
             active={activeTab === "matches"}
-            onClick={() => onTab("matches")}
+            onClick={() => onTabNav('matches')}
           />
+          <Link
+            href="/series"
+            className="flex min-w-[110px] flex-col items-center justify-center rounded-xl px-3 py-2 text-neutral-300 hover:text-white"
+          >
+          <Repeat className="size-5" />
+          <span className="mt-1 text-xs">Seriler</span>
+          </Link>
+
           <TabButton
             icon={<UserRound className="size-5" />}
             label="Profil"
             active={activeTab === "profile"}
-            onClick={() => onTab("profile")}
+            onClick={() => onTabNav('profile')}
           />
           <TabButton
             icon={<Shield className="size-5" />}
             label="Oyuncu"
             active={activeTab === "player"}
-            onClick={() => onTab("player")}
+            onClick={() => onTabNav('player')}
           />
         </div>
       </nav>
@@ -843,8 +962,40 @@ function TabButton({ icon, label, active, onClick }: any) {
   );
 }
 
-/* ------------------ Maçlar ekranı ------------------ */
 
+/* ------- küçük yardımcı UI bileşenleri (dosyanın tepesine koy) ------- */
+function BadgeBase({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function BadgeNeutral({ children }: { children: React.ReactNode }) {
+  return <BadgeBase className="bg-white/10 ring-white/15">{children}</BadgeBase>;
+}
+function BadgeLock({ children = "Kilitli" }: { children?: React.ReactNode }) {
+  return <BadgeBase className="bg-amber-500/15 text-amber-300 ring-amber-500/30">{children}</BadgeBase>;
+}
+function BadgeSeries({ children = "Seri" }: { children?: React.ReactNode }) {
+  return <BadgeBase className="bg-indigo-500/15 text-indigo-300 ring-indigo-500/30">{children}</BadgeBase>;
+}
+function BadgeClosed({ children = "Kapalı" }: { children?: React.ReactNode }) {
+  return <BadgeBase className="bg-rose-600/15 text-rose-300 ring-rose-500/30">{children}</BadgeBase>;
+}
+
+
+function StatPill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-lg bg-neutral-800/80 px-2.5 py-1 text-xs">
+      {children}
+    </span>
+  );
+}
+
+
+/* ------------------ Maçlar ekranı ------------------ */
 function MatchesScreen() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
   const { me } = useMe();
@@ -854,7 +1005,8 @@ function MatchesScreen() {
   const [items, setItems] = React.useState<MatchLiteWithAccess[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [joining, setJoining] = React.useState<string | null>(null);
-  // -- Kilitli maça erişim isteği state'i --
+
+  // Kilitli maça erişim isteği state
   const [requestingId, setRequestingId] = React.useState<string | null>(null);
   const [requested, setRequested] = React.useState<Record<string, boolean>>({});
 
@@ -879,15 +1031,13 @@ function MatchesScreen() {
     }
   }
 
-  // 🔸 Değerlendirme modal state (YENİ)
+  // Değerlendirme modal
   const [rateOpen, setRateOpen] = React.useState(false);
   const [ratePayload, setRatePayload] = React.useState<any | null>(null);
 
   // Filtreler
   const [level, setLevel] = React.useState<"" | "Kolay" | "Orta" | "Zor">("");
-  const [format, setFormat] = React.useState<
-    "" | "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11"
-  >("");
+  const [format, setFormat] = React.useState<"" | "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11">("");
   const [hidePast, setHidePast] = React.useState(true);
 
   // Kullanıcının ilk 3 tercihi
@@ -903,11 +1053,7 @@ function MatchesScreen() {
   async function refresh() {
     setLoading(true);
     try {
-      // 🔽 headers: H() eklendi
-      const r = await fetch(`${API_URL}/matches`, {
-        cache: "no-store",
-        headers: H(),
-      });
+      const r = await fetch(`${API_URL}/matches`, { cache: "no-store", headers: H() });
       const data = await r.json();
       setItems(Array.isArray(data) ? data : []);
     } catch {
@@ -918,42 +1064,31 @@ function MatchesScreen() {
   }
 
   React.useEffect(() => {
-    // Sadece inviteOnly & erişimi olmayan maç varsa izle
     const needWatch = items.some(m => m.inviteOnly && !(m as any).access?.canView);
     if (!needWatch) return;
-
-    const t = setInterval(() => {
-      refresh(); // BE access durumunu günceller
-    }, 20000); // 20 sn
-
+    const t = setInterval(() => { refresh(); }, 20000);
     return () => clearInterval(t);
   }, [items]);
-  
+
   // Yardımcılar
   function missingOf(m: any): string[] {
     const slots: any[] = Array.isArray(m?.slots) ? m.slots : [];
-    // placeholder'lar dolu sayılır
     return slots.filter((s) => !s.userId && !s.placeholder).map((s) => s.pos);
   }
-
   function myPos(m: any): string | null {
     const slots: any[] = Array.isArray(m?.slots) ? m.slots : [];
     const s = slots.find((s) => s.userId === meId);
     return s?.pos || null;
   }
 
-  // Çıkış
-  function logout() {
-    clearToken();
-    window.location.href = "/";
-  }
+  function logout() { clearToken(); window.location.href = "/"; }
 
   // Hızlı katıl
   async function quickJoin(m: MatchLiteWithAccess) {
     const isOwner = m.ownerId === meId;
     const minePos = myPos(m);
 
-    // Kilit kontrolü: access.canView + owner + zaten katılmış olma
+
     const canView = m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(minePos)) : true;
     if (!canView) {
       if (m.access?.requestPending || requested[m.id]) {
@@ -964,54 +1099,25 @@ function MatchesScreen() {
       return;
     }
 
-    // Zaten katıldıysan direkt detay
-    if (minePos) {
-      window.location.href = `/match/${m.id}`;
-      return;
-    }
+    if (minePos) { window.location.href = `/match/${m.id}`; return; }
 
     setJoining(m.id);
     try {
       const hdr = authHeader();
-      if (!hdr.Authorization) {
-        alert("Oturum gerekli. Lütfen giriş yapın.");
-        window.location.href = "/";
-        return;
-      }
+      if (!hdr.Authorization) { alert("Oturum gerekli. Lütfen giriş yapın."); window.location.href = "/"; return; }
 
-      // token geçerli mi?
       const chk = await fetch(`${API_URL}/users/me`, { headers: { ...hdr }, cache: "no-store" });
-      if (chk.status === 401) {
-        clearToken();
-        alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
-        window.location.href = "/";
-        return;
-      }
+      if (chk.status === 401) { clearToken(); alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın."); window.location.href = "/"; return; }
 
-      // Detay çekip boş pozisyonları bul (placeholder’ları boş sayma)
-      const rDet = await fetch(`${API_URL}/matches/${m.id}`, {
-        cache: "no-store",
-        headers: { ...hdr },
-      });
-      if (rDet.status === 403) {
-        alert("Bu maç kilitli ve erişimin yok.");
-        return;
-      }
+      const rDet = await fetch(`${API_URL}/matches/${m.id}`, { cache: "no-store", headers: { ...hdr } });
+      if (rDet.status === 403) { alert("Bu maç kilitli ve erişimin yok."); return; }
       const det = await rDet.json().catch(() => ({}));
       const slots: any[] = Array.isArray(det?.slots) ? det.slots : [];
-      const missing: string[] = slots
-        .filter((s: any) => !s.userId && !s.placeholder)
-        .map((s: any) => s.pos);
+      const missing: string[] = slots.filter((s: any) => !s.userId && !s.placeholder).map((s: any) => s.pos);
 
-      // Hiç direkt boş yoksa pozisyon seçtirme sayfasına yönlendir
-      if (missing.length === 0) {
-        window.location.href = `/match/${m.id}?selectPosition=1`;
-        return;
-      }
+      if (missing.length === 0) { window.location.href = `/match/${m.id}?selectPosition=1`; return; }
 
-      // Tercihlere göre seçim yap; yoksa ilk boş
-      const chosenPos =
-        (prefs ?? []).find((p) => missing.includes(p)) ?? missing[0];
+      const chosenPos = (prefs ?? []).find((p) => missing.includes(p)) ?? missing[0];
 
       const r = await fetch(`${API_URL}/matches/join`, {
         method: "POST",
@@ -1019,17 +1125,8 @@ function MatchesScreen() {
         body: JSON.stringify({ matchId: m.id, pos: chosenPos }),
       });
 
-      if (r.status === 401) {
-        clearToken();
-        alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
-        window.location.href = "/";
-        return;
-      }
-      if (r.status === 403) {
-        alert("Erişim yok. Maç kilitli olabilir.");
-        window.location.href = `/match/${m.id}`;
-        return;
-      }
+      if (r.status === 401) { clearToken(); alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın."); window.location.href = "/"; return; }
+      if (r.status === 403) { alert("Erişim yok. Maç kilitli olabilir."); window.location.href = `/match/${m.id}`; return; }
 
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data?.ok === false) {
@@ -1037,7 +1134,6 @@ function MatchesScreen() {
         window.location.href = `/match/${m.id}`;
         return;
       }
-
       window.location.href = `/match/${m.id}`;
     } catch (e: any) {
       alert(e?.message || "Katılım sırasında hata.");
@@ -1047,25 +1143,15 @@ function MatchesScreen() {
     }
   }
 
-  // Ayrıl
   async function leave(m: MatchLite) {
     try {
       const hdr = authHeader();
-      if (!hdr.Authorization) {
-        alert("Oturum gerekli. Lütfen giriş yapın.");
-        window.location.href = "/";
-        return;
-      }
+      if (!hdr.Authorization) { alert("Oturum gerekli. Lütfen giriş yapın."); window.location.href = "/"; return; }
       const r = await fetch(`${API_URL}/matches/${m.id}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...hdr },
       });
-      if (r.status === 401) {
-        clearToken();
-        alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın.");
-        window.location.href = "/";
-        return;
-      }
+      if (r.status === 401) { clearToken(); alert("Oturum gerekli veya süresi doldu. Lütfen tekrar giriş yapın."); window.location.href = "/"; return; }
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data?.ok === false) throw new Error(data?.message || "Ayrılma başarısız");
       await refresh();
@@ -1074,36 +1160,62 @@ function MatchesScreen() {
     }
   }
 
-  // 🔸 Karttan “Değerlendir”i aç (YENİ)
+  // ICS indir
+  async function downloadIcs(matchId: string, title?: string | null) {
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/ics`, { headers: { ...H() }, cache: "no-store" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.message || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `match-${matchId}.ics`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e?.message || "ICS indirilemedi");
+    }
+  }
+
+  async function rsvp(matchId: string, status: 'GOING'|'NOT_GOING') {
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/rsvp`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', ...H() },
+        body: JSON.stringify({ status }),
+      });
+      const j = await r.json().catch(()=> ({}));
+      if (!r.ok || j?.ok !== true) throw new Error(j?.message || `HTTP ${r.status}`);
+      alert(status === 'GOING' ? 'Bu hafta geliyorum kaydedildi.' : 'Bu hafta gelmeyeceğin kaydedildi.');
+    } catch (e:any) {
+      alert(e?.message || 'RSVP hatası');
+    }
+  }
+
+  async function cancelWeek(matchId: string) {
+    if (!confirm('Bu haftaki maçı iptal etmek istediğine emin misin?')) return;
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/cancel-week`, { method: 'POST', headers: { ...H() } });
+      const j = await r.json().catch(()=> ({}));
+      if (!r.ok || j?.ok !== true) throw new Error(j?.message || `HTTP ${r.status}`);
+      alert('Bu haftaki maç iptal edildi.');
+      refresh();
+    } catch (e:any) {
+      alert(e?.message || 'İptal edilemedi');
+    }
+  }
+
   async function openRateFor(match: MatchLite) {
     try {
       const hdr = authHeader();
-      const det = await fetch(`${API_URL}/matches/${match.id}`, {
-        headers: { ...hdr },
-        cache: "no-store",
-      }).then((r) => r.json());
-
+      const det = await fetch(`${API_URL}/matches/${match.id}`, { headers: { ...hdr }, cache: "no-store" }).then((r) => r.json());
       const slots: any[] = Array.isArray(det?.slots) ? det.slots : [];
-
-      // uids'leri string[] olarak TİP GÜVENLİ topla
-      const uids: string[] = Array.from(
-        new Set(
-          slots
-            .map((s: any) => s?.userId)
-            .filter((u: any): u is string => typeof u === "string" && !!u && u !== meId)
-        )
-      );
-
-      // artık map parametresini 'string' kabul ediyor
+      const uids: string[] = Array.from(new Set(slots.map((s: any) => s?.userId).filter((u: any): u is string => typeof u === "string" && !!u && u !== meId)));
       const posMap = new Map<string, string | null>();
-      slots.forEach((s: any) => {
-        if (s?.userId) posMap.set(String(s.userId), (s.pos ?? null) as any);
-      });
-      const players = uids.map((id) => ({
-        id,
-        phone: null as string | null,
-        pos: posMap.get(id) ?? null, // <-- pozisyonu modal'a taşı
-      }));
+      slots.forEach((s: any) => { if (s?.userId) posMap.set(String(s.userId), (s.pos ?? null) as any); });
+      const players = uids.map((id) => ({ id, phone: null as string | null, pos: posMap.get(id) ?? null }));
       setRatePayload({ matchId: match.id, title: match.title, players });
       setRateOpen(true);
     } catch {
@@ -1113,170 +1225,129 @@ function MatchesScreen() {
 
   // Filtrelenmiş liste
   const filtered = items.filter((m) => {
-    if (hidePast && m.time) {
-      try {
-        if (new Date(m.time) < new Date()) return false;
-      } catch {}
-    }
+    if (hidePast && m.time) { try { if (new Date(m.time) < new Date()) return false; } catch {} }
     if (level && m.level !== level) return false;
     if (format && m.format !== format) return false;
     return true;
   });
 
   return (
-    <div className="mx-auto max-w-4xl p-4">
+    <div className="mx-auto max-w-4xl p-4 pb-20">
       {/* Üst bar filtreler */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Link
-          href="/matches/new"
-          className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
-        >
+        <Link href="/matches/new" className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500">
           Maç Oluştur
         </Link>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <label className="text-xs opacity-75">Seviye</label>
-          <select
-            value={level}
-            onChange={(e) => setLevel(e.target.value as any)}
-            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm"
-          >
-            <option value="">Hepsi</option>
-            <option>Kolay</option>
-            <option>Orta</option>
-            <option>Zor</option>
+          <select value={level} onChange={(e) => setLevel(e.target.value as any)}
+                  className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
+            <option value="">Hepsi</option><option>Kolay</option><option>Orta</option><option>Zor</option>
           </select>
 
           <label className="ml-2 text-xs opacity-75">Format</label>
-          <select
-            value={format}
-            onChange={(e) => setFormat(e.target.value as any)}
-            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm"
-          >
+          <select value={format} onChange={(e) => setFormat(e.target.value as any)}
+                  className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
             <option value="">Hepsi</option>
-            <option>5v5</option>
-            <option>6v6</option>
-            <option>7v7</option>
-            <option>8v8</option>
-            <option>9v9</option>
-            <option>10v10</option>
-            <option>11v11</option>
+            <option>5v5</option><option>6v6</option><option>7v7</option><option>8v8</option><option>9v9</option><option>10v10</option><option>11v11</option>
           </select>
 
           <label className="ml-2 flex items-center gap-1 text-xs opacity-75">
-            <input
-              type="checkbox"
-              checked={hidePast}
-              onChange={(e) => setHidePast(e.target.checked)}
-            />
+            <input type="checkbox" checked={hidePast} onChange={(e) => setHidePast(e.target.checked)} />
             Geçmişi gizle
           </label>
 
-          <button
-            onClick={refresh}
-            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-          >
-            Yenile
-          </button>
-
-            <Link
-              href="/discover"
-              className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-            >
-              Keşfet
-            </Link>
-
-          <button
-            onClick={logout}
-            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-          >
-            Çıkış
-          </button>
+          <button onClick={refresh} className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Yenile</button>
+          <Link href="/discover" className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Keşfet</Link>
+          <button onClick={logout} className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Çıkış</button>
         </div>
       </div>
 
       {/* içerik */}
       {loading && <div className="text-sm text-neutral-400">Yükleniyor…</div>}
-      {!loading && !filtered.length && (
-        <div className="text-sm text-neutral-400">Kayıt yok</div>
-      )}
+      {!loading && !filtered.length && <div className="text-sm text-neutral-400">Kayıt yok</div>}
 
       <div className="space-y-3">
         {filtered.map((m) => {
           const isOwner = m.ownerId === meId;
+          const isSeriesMember = Boolean((m as any).access?.seriesMember);
           const mine = myPos(m);
-          const canView =
-            m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(mine)) : true;
+          const canView = m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(mine)) : true;
           const pending = Boolean(m.access?.requestPending) || !!requested[m.id];
           const miss = missingOf(m);
           const prefHit = prefs.find((p) => miss.includes(p));
 
           // Doluluk
           const slotsArr: any[] = Array.isArray((m as any)?.slots) ? (m as any).slots : [];
-          const total =
-            slotsArr.length ||
-            (typeof m.format === "string"
-              ? (() => {
-                  const n = parseInt(String(m.format).split("v")[0], 10);
-                  return Number.isFinite(n) ? n * 2 : 0;
-                })()
-              : 0);
+          const total = slotsArr.length || (typeof m.format === "string" ? (() => {
+            const n = parseInt(String(m.format).split("v")[0], 10);
+            return Number.isFinite(n) ? n * 2 : 0;
+          })() : 0);
           const filled = slotsArr.filter((s) => s?.userId).length;
           const pct = total ? Math.round((filled / total) * 100) : 0;
           const isFull = total > 0 && filled >= total;
 
-          // 🔸 24 saat içinde mi? (YENİ)
+          // 24 saat penceresi
           const now = Date.now();
           const t = m.time ? new Date(m.time).getTime() : 0;
           const ended = t && t < now;
           const within24h = ended && now - t <= 24 * 3600 * 1000;
 
+          // etkin durum (backend dönerse onu kullan)
+          const eff = (m as any).statusEffective ?? m.status;
+
           return (
-            <div key={m.id} className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
-              <div className="flex items-start justify-between gap-3">
-                {/* SOL */}
-                <div>
-                  <div className="text-base font-semibold flex items-center gap-2">
-                    <span>{m.title || "Maç"}</span>
-                    {m.inviteOnly ? <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Kilitli</span> : null}
-                  </div>
-                  {m.status === 'DRAFT'  && (
-                    <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Taslak</span>
-                  )}
-                  {m.status === 'CLOSED' && (
-                    <span className="rounded bg-rose-600/20 px-2 py-0.5 text-xs text-rose-300 ring-1 ring-rose-500/30">
-                      Kapalı
-                    </span>
-                  )}
-                  <div className="mt-1 text-xs text-neutral-300">
-                    {m.location || "—"} • {m.level || "—"} • {m.format || "—"}
-                    {m.time && (
-                      <>
-                        {" "}
-                        •{" "}
-                        {new Date(m.time).toLocaleString([], {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })}
-                      </>
-                    )}
-                  </div>
+            <div key={m.id} className="rounded-2xl border border-white/10 bg-neutral-900/60 p-3 sm:p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                {/* Sol: başlık + meta */}
+                <div className="min-w-0">
+                  {(() => {
+                    const title = (m.title || "Maç").trim();
+                    const isTitleIlk = title.toLocaleLowerCase("tr-TR") === "ilk";
+                    const showSeriesBadge = Boolean((m as any).seriesId) && !isTitleIlk;
 
-                  {/* Doluluk */}
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-1.5 w-40 overflow-hidden rounded bg-neutral-800">
-                      <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="text-xs text-neutral-300">
-                      {filled}/{total} ({pct}%)
-                    </span>
-                    {isFull && (
-                      <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[11px] text-rose-300 ring-1 ring-rose-500/30">
-                        Dolu
+                    return (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {showSeriesBadge && <BadgeSeries />}           {/* “Seri” */}
+                        {m.inviteOnly && <BadgeLock />}               {/* Amber renk */}
+                        {eff === "DRAFT" && <BadgeNeutral>Taslak</BadgeNeutral>}
+                        {eff === "CLOSED" && <BadgeClosed />}         {/* Kırmızımsı */}
+                        <h3 className="truncate text-base font-semibold leading-6">{title}</h3>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Meta pill’ler + tarih */}
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-300">
+                    <StatPill>{m.location || "—"}</StatPill>
+                    <StatPill>{m.level || "—"}</StatPill>
+                    <StatPill>{m.format || "—"}</StatPill>
+                    {m.time ? (
+                      <span className="opacity-80">
+                        {new Date(m.time).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
                       </span>
+                    ) : (
+                      <span className="opacity-60">Tarih bekleniyor</span>
                     )}
                   </div>
 
+                  {/* Doluluk barı */}
+                  <div className="mt-2">
+                    <div className="h-1.5 w-full sm:w-64 rounded-full bg-neutral-800">
+                      <div className="h-1.5 rounded-full bg-white/70" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-neutral-400">
+                      <span>{filled}/{total} ({pct}%)</span>
+                      {isFull && (
+                        <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-rose-300 ring-1 ring-rose-500/30">
+                          Dolu
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Uygunluk / katılım bilgisi */}
                   <div className="mt-1 text-xs">
                     {mine ? (
                       <span className="text-emerald-400">Katıldın • Pozisyonun: {mine}</span>
@@ -1284,9 +1355,7 @@ function MatchesScreen() {
                       prefHit ? (
                         <span className="text-emerald-400">Eksik: {miss.join(", ")}</span>
                       ) : (
-                        <span className="text-amber-400">
-                          Tercih mevki yok • Detaydan seçebilirsiniz
-                        </span>
+                        <span className="text-amber-400">Tercih mevki yok • Detaydan seçebilirsiniz</span>
                       )
                     ) : (
                       <span className="text-neutral-400">Pozisyonlar dolu</span>
@@ -1294,81 +1363,94 @@ function MatchesScreen() {
                   </div>
                 </div>
 
-                {/* SAĞ */}
-                <div className="flex items-center gap-2">
-                  {(() => {
-                    const isOwner = m.ownerId === meId;
-                    const mine = myPos(m);
+                {/* Sağ: aksiyonlar */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {!canView ? (
+                    <>
+                      <button
+                        onClick={() => requestAccess(m.id)}
+                        disabled={pending || requestingId === m.id}
+                        className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700 disabled:opacity-60"
+                      >
+                        {pending ? "İstek gönderildi" : (requestingId === m.id ? "Gönderiliyor…" : "İstek yolla")}
+                      </button>
+                      <span className="rounded-xl bg-neutral-900/60 px-3 py-1.5 text-sm text-neutral-400 opacity-60">
+                        Detay (kilitli)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      {!mine ? (
+                        <button
+                          onClick={() => quickJoin(m)}
+                          disabled={joining === m.id || isFull || eff !== 'OPEN'}
+                          className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          {eff !== 'OPEN' ? "Kapalı" : isFull ? "Dolu" : joining === m.id ? "Katılıyor…" : "Katıl"}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => leave(m)}
+                          className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                        >
+                          Ayrıl
+                        </button>
+                      )}
 
-                    // kilitliyse: owner || katılımcı || BE access.canView -> görebilir
-                    // kilitli değilse: zaten görebilir
-                    const canView =
-                      m.inviteOnly ? (Boolean(m.access?.canView) || isOwner || Boolean(mine)) : true;
-                    const pending = Boolean(m.access?.requestPending) || !!requested[m.id];
-
-                    if (!canView) {
-                      // kilitli ve erişimi yok -> "İstek yolla" + "Detay (kilitli)"
-                      return (
+                      <a href={`/match/${m.id}`} className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
+                        Detay
+                      </a>
+                      <button
+                        onClick={() => downloadIcs(m.id, m.title)}
+                        className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                      >
+                        Takvime ekle
+                      </button>
+                      
+                      {/* Seri ise RSVP grubu */}
+                      {Boolean((m as any).seriesId) && (isOwner || isSeriesMember) && (
                         <>
                           <button
-                            onClick={() => requestAccess(m.id)}
-                            disabled={pending || requestingId === m.id}
-                            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700 disabled:opacity-60"
+                            onClick={() => rsvp(m.id, 'GOING')}
+                            disabled={eff !== 'OPEN'}
+                            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700 disabled:opacity-50"
+                            title="Bu hafta geliyorum"
                           >
-                            {pending ? "İstek gönderildi" : (requestingId === m.id ? "Gönderiliyor…" : "İstek yolla")}
+                            Geliyorum
                           </button>
-                          <span className="rounded-xl bg-neutral-900/60 px-3 py-1.5 text-sm text-neutral-400 opacity-60">
-                            Detay (kilitli)
-                          </span>
+
+                          <button
+                            onClick={() => rsvp(m.id, 'NOT_GOING')}
+                            disabled={eff !== 'OPEN'}
+                            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700 disabled:opacity-50"
+                            title="Bu hafta gelemeyeceğim"
+                          >
+                            Gelmeyeceğim
+                          </button>
+
+                          {isOwner && (
+                            <button
+                              onClick={() => cancelWeek(m.id)}
+                              className="rounded-xl bg-rose-600 px-3 py-1.5 text-sm hover:bg-rose-500"
+                              title="Bu haftaki maçı iptal et"
+                            >
+                              Bu haftayı iptal et
+                            </button>
+                          )}
                         </>
-                      );
-                    }
-                    // erişim var -> normal akış (+ 24 saat içinde "Değerlendir" butonu)
-                    return (
-                      <>
-                        {!mine ? (
-                          <button
-                            onClick={() => quickJoin(m)}
-                            disabled={joining === m.id || isFull || m.status !== 'OPEN'}
-                            className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+                      )}
+                      
+                      {/* Maç bitti + 24s penceredeyse ve owner/katılımcıysa */}
+                      {within24h && (mine || isOwner) && (
+                        <button
+                          onClick={() => openRateFor(m)}
+                          className="rounded-xl bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500"
                         >
-                          {m.status !== 'OPEN' ? "Kapalı" : isFull ? "Dolu" : joining === m.id ? "Katılıyor…" : "Katıl"}
+                          Değerlendir
                         </button>
-                        ) : (
-                          <button
-                            onClick={() => leave(m)}
-                            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                          >
-                            Ayrıl
-                          </button>
-                        )}
-                        <a
-                          href={`/match/${m.id}`}
-                          className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                        >
-                          Detay
-                        </a>
-                        <a
-                          href={`${API_URL}/matches/${m.id}/ics`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                        >
-                          Takvime ekle
-                        </a>
-                        {/* Maç bitti ve 24 saat içindeyse; sadece owner veya katılımcı için */}
-                        {within24h && (mine || isOwner) && (
-                          <button
-                            onClick={() => openRateFor(m)}
-                            className="rounded-xl bg-amber-600 px-3 py-1.5 text-sm hover:bg-amber-500"
-                            title="Bu maç için oyuncuları değerlendir"
-                          >
-                            Değerlendir
-                          </button>
-                        )}
-                      </>
-                    );
-                  })()}
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1376,19 +1458,17 @@ function MatchesScreen() {
         })}
       </div>
 
-      {/* 🔸 Değerlendirme Modalı bağlama (YENİ) */}
+      {/* Değerlendirme Modalı */}
       <RateMatchModal
         open={rateOpen}
         onClose={() => setRateOpen(false)}
         match={ratePayload}
-        onSaved={() => {
-          setRateOpen(false);
-          refresh();
-        }}
+        onSaved={() => { setRateOpen(false); refresh(); }}
       />
     </div>
   );
 }
+
 
 /* ---------------------- Profil ekranı ---------------------- */
 
@@ -1693,19 +1773,46 @@ function PlayerProfile() {
         .catch(()=> setPosAgg({}));
     }, [me?.id]);
 
+  /* ---- Hooks: koşulsuz en üstte çağır ---- */
+  const [positionLevels, setPositionLevels] = React.useState<Record<string, number>>({});
+
+  React.useEffect(() => {
+    if (me?.positionLevels && typeof me.positionLevels === "object") {
+      setPositionLevels(me.positionLevels as any);
+    } else {
+      setPositionLevels({});
+    }
+  }, [me?.positionLevels]);
+
+  /* ---- Guard return'lar: hook'lardan SONRA ---- */
   if (loading) return <div className="mx-auto max-w-4xl p-4">Yükleniyor…</div>;
-  if (error)   return <div className="mx-auto max-w-4xl p-4 text-red-400">❌ {error}</div>;
+  if (error)   return <div className="mx-auto max-w-4xl p-4 text-red-400">✗ {error}</div>;
   if (!me)     return null;
 
+  /* ---- Devam ---- */
   const prefs: string[] = Array.isArray(me.positions) ? me.positions : [];
   const levels: Record<string, number> =
-    me.positionLevels && typeof me.positionLevels === "object" ? me.positionLevels : {};
+    (positionLevels && Object.keys(positionLevels).length > 0)
+      ? positionLevels
+      : (me?.positionLevels && typeof me.positionLevels === "object"
+          ? (me.positionLevels as any)
+          : {});
+
   // sahadaki anahtarı profil anahtarına eşle (STP -> CB gibi)
   const mapToProfileKey = (k: string) => (k === 'STP' ? 'CB' : k);
   const perfOf = (rawKey: string) => {
     const key = mapToProfileKey(rawKey);
-    const row = (posAgg as any)?.[key] || (posAgg as any)?.[rawKey];
-    return row?.avg as number | undefined; // 1..10
+    const row = (posAgg as any)?.[key] || (posAgg as any)?.[rawKey]; // { avg, samples }
+    if (row && typeof row.avg === "number") {
+      const baseline = (levels as any)?.[key]; // self-rating
+      if (typeof baseline === "number" && typeof row.samples === "number" && row.samples >= 1) {
+        // (gerçekToplam + self) / (örnek + 1)
+        const mixed = (row.avg * row.samples + baseline) / (row.samples + 1);
+        return mixed;
+      }
+      return row.avg;
+    }
+    return undefined;
   };
 
   const skillOf = (rawKey: string) => {
@@ -1788,7 +1895,7 @@ function PlayerProfile() {
                       key={k}
                       className="rounded-full bg-emerald-500/20 px-3 py-1 text-sm text-emerald-300"
                     >
-                      {i + 1}. {traitPosLabel(k)} • {skillOf(k)}
+                      { i + 1 }. {traitPosLabel(k)} • {Number(skillOf(k)).toFixed(1)}
                     </span>
                   ))
                 ) : (
@@ -1810,8 +1917,8 @@ function PlayerProfile() {
                   <RatingStars label="Dakiklik"   value={showAvg.punctuality} />
                   <RatingStars label="Saygı"       value={showAvg.respect} />
                   <RatingStars label="Sportmenlik" value={showAvg.sportsmanship} />
-                  <RatingStars label="Küfür"       value={showAvg.swearing}   negative />
-                  <RatingStars label="Agresiflik"  value={showAvg.aggression} negative />
+                  <RatingStars label="Küfür"       value={showAvg.swearing}    />
+                  <RatingStars label="Agresiflik"  value={showAvg.aggression}  />
 
                   <div className="mt-3 flex items-center justify-between rounded-xl bg-neutral-800 p-3">
                     <div>
