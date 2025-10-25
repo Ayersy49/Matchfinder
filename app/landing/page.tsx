@@ -7,6 +7,9 @@ import Link from "next/link";
 import { authHeader, clearToken, getToken, setToken } from "@/lib/auth";
 import AvailabilityEditor from "../profil/AvailabilityEditor";
 import { useRouter, useSearchParams } from "next/navigation";
+import SeriesTab from "@/components/tabs/SeriesTab";
+import FooterTabs from "@/components/FooterTabs";
+import TeamsTab from "@/components/tabs/TeamsTab";
 
 
 
@@ -706,13 +709,14 @@ export default function Page() {
     }
   }, []);
 
-  const [activeTab, setActiveTab] = useState<"matches" | "profile" | "player">("matches");
+  const [activeTab, setActiveTab] = useState<"matches" | "series" | "teams" | "profile" | "player">("matches");
+
 
   // URL'den ?tab=... oku ve state'i senkronla (matches|profile|player)
   const sp = useSearchParams();
   useEffect(() => {
     const t = sp.get("tab");
-    if (t === "matches" || t === "profile" || t === "player") {
+    if (t === "matches" || t === "series" || t === "teams" || t === "profile" || t === "player") {
       setActiveTab(t as any);
     } else {
       setActiveTab("matches");
@@ -887,11 +891,11 @@ function MainShell({
   activeTab,
   onTab,
 }: {
-  activeTab: "matches" | "profile" | "player";
+  activeTab: "matches" | "series" | "teams" | "profile" | "player";
   onTab: (t: any) => void;
 }) {
   const router = useRouter();
-  const onTabNav = (t: 'matches'|'profile'|'player') => {
+  const onTabNav = (t: 'matches'|'series'|'teams'|'profile'|'player') => {
     onTab(t);
     router.replace(`/landing?tab=${t}`);
   };
@@ -910,6 +914,8 @@ function MainShell({
 
       <main className="px-4 py-4">
         {activeTab === "matches" && <MatchesScreen />}
+        {activeTab === "series"  && <SeriesTab />}
+        {activeTab === "teams"   && <TeamsTab />}
         {activeTab === "profile" && <ProfileScreen />}
         {activeTab === "player" && <PlayerProfile />}
       </main>
@@ -922,14 +928,12 @@ function MainShell({
             active={activeTab === "matches"}
             onClick={() => onTabNav('matches')}
           />
-          <Link
-            href="/series"
-            className="flex min-w-[110px] flex-col items-center justify-center rounded-xl px-3 py-2 text-neutral-300 hover:text-white"
-          >
-          <Repeat className="size-5" />
-          <span className="mt-1 text-xs">Seriler</span>
-          </Link>
-
+          <TabButton
+            icon={<Repeat className="size-5" />}
+            label="Seriler"
+            active={activeTab === "series"}
+            onClick={() => onTabNav('series')}
+          />
           <TabButton
             icon={<UserRound className="size-5" />}
             label="Profil"
@@ -941,6 +945,12 @@ function MainShell({
             label="Oyuncu"
             active={activeTab === "player"}
             onClick={() => onTabNav('player')}
+          />
+          <TabButton
+            icon={<Layers className="size-5" />}   
+            label="Takımlar"
+            active={activeTab === "teams"}
+            onClick={() => onTabNav('teams')}
           />
         </div>
       </nav>
