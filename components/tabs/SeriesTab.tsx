@@ -132,15 +132,6 @@ export default function SeriesTab() {
 
         {/* Sağ üst aksiyonlar */}
         <div className="ml-auto flex items-center gap-2">
-          <PendingRatingsBell />
-          <NotificationsBell />
-          <Link
-            href="/friends"
-            className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-          >
-            Arkadaşlar
-          </Link>
-          <InvitesBell />
           <button
             onClick={refresh}
             className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
@@ -206,16 +197,22 @@ export default function SeriesTab() {
                 {/* SAĞ */}
                 <div className="flex items-center gap-2">
                   <Link
-                    href={nm ? `/match/${nm.id}` : "#"}
+                    href={`/series/${s.id}`}
                     className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-                    aria-disabled={!nm}
-                    onClick={(e) => {
-                      if (!nm) e.preventDefault();
-                    }}
                   >
                     Detay
                   </Link>
 
+                  {/* Varsa HAFTA/MAÇ DETAYI */}
+                  {nm && (
+                    <Link
+                      href={`/match/${nm.id}`}
+                      className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+                      title="En yakın haftanın maç detayı"
+                    >
+                      Hafta
+                    </Link>
+                  )}
                   <button
                     onClick={() => nm && downloadIcs(nm.id, s.title)}
                     disabled={!nm}
