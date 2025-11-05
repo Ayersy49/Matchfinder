@@ -11,14 +11,14 @@ type Slot = { key: string; label: string; x: number; y: number };
 
 const LAYOUTS: Record<number, Slot[]> = {
   5: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 3, y: 50 },
     { key: "CB1", label: "Stoper", x: 35, y: 35 },
     { key: "CB2", label: "Stoper", x: 35, y: 65 },
     { key: "ST1", label: "Forvet", x: 75, y: 35 },
     { key: "ST2", label: "Forvet", x: 75, y: 65 },
   ],
   6: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
     { key: "CB1", label: "Stoper", x: 25, y: 35 },
     { key: "CB2", label: "Stoper", x: 25, y: 65 },
     { key: "CM1", label: "Orta Saha", x: 55, y: 35 },
@@ -26,7 +26,7 @@ const LAYOUTS: Record<number, Slot[]> = {
     { key: "ST", label: "Forvet", x: 85, y: 50 },
   ],
   7: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
     { key: "CB1", label: "Stoper", x: 22, y: 30 },
     { key: "CB2", label: "Stoper", x: 22, y: 70 },
     { key: "CM1", label: "Orta Saha", x: 45, y: 30 },
@@ -35,7 +35,7 @@ const LAYOUTS: Record<number, Slot[]> = {
     { key: "ST2", label: "Forvet", x: 75, y: 65 },
   ],
   8: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
     { key: "CB1", label: "Stoper", x: 20, y: 25 },
     { key: "CB2", label: "Stoper", x: 20, y: 50 },
     { key: "CB3", label: "Stoper", x: 20, y: 75 },
@@ -45,7 +45,7 @@ const LAYOUTS: Record<number, Slot[]> = {
     { key: "ST2", label: "Forvet", x: 80, y: 65 },
   ],
   9: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
     { key: "CB1", label: "Stoper", x: 20, y: 25 },
     { key: "CB2", label: "Stoper", x: 20, y: 50 },
     { key: "CB3", label: "Stoper", x: 20, y: 75 },
@@ -56,7 +56,7 @@ const LAYOUTS: Record<number, Slot[]> = {
     { key: "ST2", label: "Forvet", x: 80, y: 60 },
   ],
   10: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
     { key: "CB1", label: "Stoper", x: 18, y: 40 },
     { key: "CB2", label: "Stoper", x: 18, y: 60 },
     { key: "LB", label: "Sol Bek", x: 25, y: 25 },
@@ -68,7 +68,7 @@ const LAYOUTS: Record<number, Slot[]> = {
     { key: "ST", label: "Forvet", x: 88, y: 50 },
   ],
   11: [
-    { key: "GK", label: "Kaleci", x: 8, y: 50 },
+    { key: "GK", label: "Kaleci", x: 6, y: 50 },
     { key: "CB1", label: "Stoper", x: 18, y: 40 },
     { key: "CB2", label: "Stoper", x: 18, y: 60 },
     { key: "LB", label: "Sol Bek", x: 24, y: 25 },
@@ -104,6 +104,7 @@ export default function NewTeamPage() {
         name: name.trim(),
         city: city.trim() || undefined,
         district: district.trim() || undefined,
+        size,
       });
       router.replace(`/teams/${team.id}`);
     } catch (e: any) {

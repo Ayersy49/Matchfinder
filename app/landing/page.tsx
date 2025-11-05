@@ -620,13 +620,24 @@ type MatchLite = {
   format?: string | null;
   price?: number | null;
   time?: string | null;
-  createdAt?: string;
+  createdAt?: string | null;
+
+  // slotlar FE'de doluluk göstergesi için
   slots?: SlotLite[] | null;
+
+  // erişim ve durum
   inviteOnly?: boolean | null;
   ownerId?: string | null;
   status?: 'DRAFT' | 'OPEN' | 'CLOSED' | null;
   closedAt?: string | null;
+
+  // —— TAKIM MAÇI highlight için ek alanlar ——
+  createdFrom?: string | null;     // 'TEAM_MATCH' gelirse takım maçı
+  highlightUntil?: string | null;  // ISO string; future ise vurgu açık
+  teamAId?: string | null;
+  teamBId?: string | null;
 };
+
 
 type SlotLite = {
   pos: string;
@@ -1090,6 +1101,15 @@ function MatchesScreen() {
     const s = slots.find((s) => s.userId === meId);
     return s?.pos || null;
   }
+    // --- TAKIM MAÇI / HIGHLIGHT helper'ları ---
+  const isTeamMatch = (m: any) =>
+    (m?.createdFrom === 'TEAM_MATCH') || (!!(m as any)?.teamAId && !!(m as any)?.teamBId);
+
+  const isHighlighted = (m: any) => {
+    if (!isTeamMatch(m)) return false;
+    const until = (m as any)?.highlightUntil ? Date.parse(String((m as any).highlightUntil)) : 0;
+    return Number.isFinite(until) && until > Date.now();
+  };
 
   function logout() { clearToken(); window.location.href = "/"; }
 
@@ -1241,6 +1261,16 @@ function MatchesScreen() {
     return true;
   });
 
+    // Highlight'lar en üstte, sonra zamana göre (en yakın önce)
+  const list = [...filtered].sort((a, b) => {
+    const ah = isHighlighted(a), bh = isHighlighted(b);
+    if (ah !== bh) return ah ? -1 : 1;
+    const ta = a.time ? Date.parse(String(a.time)) : Number.POSITIVE_INFINITY;
+    const tb = b.time ? Date.parse(String(b.time)) : Number.POSITIVE_INFINITY;
+    return ta - tb;
+  });
+
+
   return (
     <div className="mx-auto max-w-4xl p-4 pb-20">
       {/* Üst bar filtreler */}
@@ -1279,7 +1309,9 @@ function MatchesScreen() {
       {!loading && !filtered.length && <div className="text-sm text-neutral-400">Kayıt yok</div>}
 
       <div className="space-y-3">
-        {filtered.map((m) => {
+        {list.map((m) => {
+          const teamMatch   = isTeamMatch(m);
+          const highlighted = isHighlighted(m);
           const isOwner = m.ownerId === meId;
           const isSeriesMember = Boolean((m as any).access?.seriesMember);
           const mine = myPos(m);
@@ -1308,7 +1340,15 @@ function MatchesScreen() {
           const eff = (m as any).statusEffective ?? m.status;
 
           return (
-            <div key={m.id} className="rounded-2xl border border-white/10 bg-neutral-900/60 p-3 sm:p-4">
+            <div
+              key={m.id}
+              className={
+              "rounded-2xl border p-3 sm:p-4 transition " +
+              (highlighted
+                  ? "border-rose-400/70 ring-1 ring-rose-400/40 bg-rose-500/5 shadow-[0_0_1.2rem_rgba(244,63,94,0.25)]"
+                  : "border-white/10 ring-1 ring-white/10 bg-neutral-900/60")
+              }
+            >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 {/* Sol: başlık + meta */}
                 <div className="min-w-0">
@@ -1323,6 +1363,16 @@ function MatchesScreen() {
                         {m.inviteOnly && <BadgeLock />}               {/* Amber renk */}
                         {eff === "DRAFT" && <BadgeNeutral>Taslak</BadgeNeutral>}
                         {eff === "CLOSED" && <BadgeClosed />}         {/* Kırmızımsı */}
+                        {teamMatch && (
+                          <BadgeBase className="bg-emerald-500/15 text-emerald-300 ring-emerald-500/30">
+                            Takım maçı
+                          </BadgeBase>
+                        )}
+                        {highlighted &&  (
+                          <BadgeBase className="bg-amber-500/20 text-amber-200 ring-amber-500/30">
+                            Yeni eşleşme
+                          </BadgeBase>
+                          )}
                         <h3 className="truncate text-base font-semibold leading-6">{title}</h3>
                       </div>
                     );
@@ -1360,7 +1410,9 @@ function MatchesScreen() {
                   {/* Uygunluk / katılım bilgisi */}
                   <div className="mt-1 text-xs">
                     {mine ? (
-                      <span className="text-emerald-400">Katıldın • Pozisyonun: {mine}</span>
+                      <span className={`font-medium ${isHighlighted(m) ? "text-emerald-300" : "text-emerald-400"}`}>
+                        Katıldın • Pozisyonun: {mine}
+                      </span>
                     ) : miss.length ? (
                       prefHit ? (
                         <span className="text-emerald-400">Eksik: {miss.join(", ")}</span>
