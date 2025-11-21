@@ -20,7 +20,11 @@ function authHeader(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
+
 type AvItem = { dow: number; start: string; end: string };
+
+const KEY_TO_DOW: Record<string, number> = { mon:1, tue:2, wed:3, thu:4, fri:5, sat:6, sun:7 };
+const DOW_TO_KEY: Record<number, string> = { 1:'mon', 2:'tue', 3:'wed', 4:'thu', 5:'fri', 6:'sat', 7:'sun' };
 
 const DAYS: { label: string; dow: number }[] = [
   { label: "Pzt", dow: 1 },
@@ -58,23 +62,44 @@ export default function AvailabilityEditor() {
         cache: "no-store",
       });
       const data = await r.json().catch(() => ({}));
-      const arr: AvItem[] = Array.isArray(data?.items) ? data.items : [];
-      setItems(
-        arr
-          .filter(
-            (x) =>
-              Number(x?.dow) >= 1 &&
-              Number(x?.dow) <= 7 &&
-              typeof x?.start === "string" &&
-              typeof x?.end === "string"
-          )
-          .map((x) => ({ dow: Number(x.dow), start: x.start.slice(0, 5), end: x.end.slice(0, 5) }))
-      );
+
+      // 1) Yeni format: { availability: { mon:[{start,end}], ... } }
+      const fromAvailabilityObj = (obj: any): AvItem[] => {
+        const out: AvItem[] = [];
+        if (obj && typeof obj === "object") {
+          for (const [k, arr] of Object.entries(obj)) {
+            const dow = KEY_TO_DOW[k] ?? 0;
+            if (!dow) continue;
+            const a = Array.isArray(arr) ? arr : [];
+            for (const it of a) {
+              const start = String((it as any)?.start || "");
+              const end   = String((it as any)?.end || "");
+              if (/^\d{2}:\d{2}$/.test(start) && /^\d{2}:\d{2}$/.test(end)) {
+                out.push({ dow, start, end });
+              }
+            }
+          }
+        }
+        return out.sort((x, y) => (x.dow - y.dow) || (x.start < y.start ? -1 : 1));
+      };
+
+      let arr: AvItem[] = [];
+      if (Array.isArray(data?.items)) {
+        // 2) Legacy destek: { items:[{dow,start,end}...] }
+        arr = data.items
+          .filter((x: any) => Number(x?.dow) >= 1 && Number(x?.dow) <= 7 && typeof x?.start === "string" && typeof x?.end === "string")
+          .map((x: any) => ({ dow: Number(x.dow), start: x.start.slice(0,5), end: x.end.slice(0,5) }));
+      } else if (data?.availability) {
+        arr = fromAvailabilityObj(data.availability);
+      }
+
+      setItems(arr);
       setDirty(false);
     } finally {
       setLoading(false);
     }
   }
+
 
   React.useEffect(() => {
     load();
@@ -117,22 +142,31 @@ export default function AvailabilityEditor() {
   async function save() {
     setSaving(true);
     try {
-      // Basit doğrulama
-      const valid = items.filter((x) => x.start < x.end);
+      const valid = items.filter((x) => /^\d{2}:\d{2}$/.test(x.start) && /^\d{2}:\d{2}$/.test(x.end) && x.start < x.end);
+
+      // Sunucu iki payload’ı da anlayabiliyor; ikisini birden gönderiyoruz (sağlam)
+      const availability: Record<string, { start: string; end: string }[]> = {
+        mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [],
+      };
+      for (const it of valid) {
+        const key = DOW_TO_KEY[it.dow];
+        if (key) availability[key].push({ start: it.start, end: it.end });
+      }
+
       const r = await fetch(`${API_URL}/users/me/availability`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader() },
-        body: JSON.stringify({ items: valid }),
+        body: JSON.stringify({ items: valid, availability }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data?.ok !== true) throw new Error("Kayıt başarısız");
+
       setDirty(false);
       setSavedAt(Date.now());
       setTimeout(() => setSavedAt(null), 2000);
-      // Yeniden sırala
-      setItems((prev) =>
-        [...prev].sort((a, b) => (a.dow - b.dow) || (a.start < b.start ? -1 : 1))
-      );
+
+      // Sunucuya kaydedileni ekrana geri yükle
+      await load();
     } catch (e: any) {
       alert(e?.message || "Kayıt başarısız");
     } finally {

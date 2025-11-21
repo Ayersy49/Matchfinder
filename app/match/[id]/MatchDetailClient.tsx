@@ -2,11 +2,20 @@
 'use client';
 
 import * as React from 'react';
+import MatchProposalsSection from "./MatchProposalsSection";
 import Link from 'next/link';
 import { authHeader, clearToken, myId } from '@/lib/auth';
 import InviteFriendsClient from './InviteFriendsClient';
-import { Shield, UserPlus } from "lucide-react";
-
+import {
+  Shield,
+  UserPlus,
+  ThumbsUp,
+  ThumbsDown,
+  Check,
+  Clock,
+  Trash2,
+  RefreshCw,
+} from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -19,14 +28,26 @@ function labelPos(p: string) {
 function canAdmin(m: MatchDetail | null, meId?: string | null) {
   return !!m && !!meId && m.ownerId === meId;
 }
-function isFree(s: Slot) { return !s.userId && !s.placeholder; }
+function isFree(s: Slot) {
+  return !s.userId && !s.placeholder;
+}
 
 type Slot = {
-  team: Team;          // "A" | "B"
-  pos: string;         // "GK" | "CB" | ...
+  team: Team;
+  pos: string;
   userId?: string | null;
   placeholder?: 'ADMIN' | 'GUEST';
   guestOfUserId?: string | null;
+};
+
+type TimeProposal = {
+  id: string;
+  by: string; // userId
+  time: string | null;
+  createdAt: string;
+  votesUp: number;
+  votesDown: number;
+  myVote: 'UP' | 'DOWN' | null;
 };
 
 type MatchDetail = {
@@ -40,6 +61,16 @@ type MatchDetail = {
   time: string | null;
   slots: Slot[];
   inviteOnly?: boolean | null;
+  createdFrom?: 'TEAM_MATCH' | string | null;
+  access?:
+    | {
+        owner?: boolean;
+        joined?: boolean;
+        canView?: boolean;
+        requestPending?: boolean;
+        canEdit?: boolean; // BE’den gelen bayrak
+      }
+    | null;
 };
 
 type ChatItem = {
@@ -59,9 +90,9 @@ type Recommended = {
   level?: number | null;
   positions?: string[] | null;
   distanceKm?: number | null;
-  ratingScore?: number | null;          // 0..100 (BE göndermezse null)
-  risk?: 'RED' | 'YELLOW' | 'GREEN' | null; // opsiyonel
-  invited?: boolean;                    // FE’de optimistic
+  ratingScore?: number | null; // 0..100
+  risk?: 'RED' | 'YELLOW' | 'GREEN' | null;
+  invited?: boolean;
 };
 
 /* ===================== Yardımcılar ===================== */
@@ -85,6 +116,11 @@ function badgeForScore(score?: number | null) {
   if (score >= 60) return { cls: 'bg-emerald-700/70 text-emerald-100', label: 'Yeşil' };
   if (score >= 40) return { cls: 'bg-amber-700/70 text-amber-100', label: 'Sarı' };
   return { cls: 'bg-rose-700/70 text-rose-100', label: 'Kırmızı' };
+}
+function fmtDate(s?: string | null) {
+  if (!s) return '—';
+  const d = new Date(s);
+  return d.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
 }
 
 /* ======================= Mini Davet Paneli ======================= */
@@ -119,6 +155,211 @@ function InviteMini({ matchId, onOpenInvite }: { matchId: string; onOpenInvite: 
   );
 }
 
+/* ======================= Saat & Tarih Önerileri ======================= */
+function TimeProposalsPanel({
+  matchId,
+  isOwner,
+  onApplied,
+}: {
+  matchId: string;
+  isOwner: boolean;
+  onApplied?: () => void; // maça saat uygulandığında üst komponent refresh etsin
+}) {
+  const me = myId();
+  const [items, setItems] = React.useState<TimeProposal[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [acting, setActing] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(`${API_URL}/matches/${matchId}/time-proposals`, {
+        headers: { ...authHeader() },
+        cache: 'no-store',
+      });
+      if (handle401(r.status)) return;
+
+      if (!r.ok) {
+        if (r.status === 403) {
+          setItems([]);
+          setError('Bu maç kilitli; yetkin yok (katılımcı/davetli değilsin).');
+          setLoading(false);
+          return;
+        }
+      }
+      const j = await r.json().catch(() => ({}));
+      const arr: any[] = Array.isArray(j?.items) ? j.items : [];
+      const mapped: TimeProposal[] = arr.map((p: any) => ({
+        id: String(p.id),
+        by: String(p.by ?? p.userId ?? ''),
+        time: p.time ?? null,
+        createdAt: p.createdAt ?? new Date().toISOString(),
+        votesUp: Number(p.votesUp ?? 0),
+        votesDown: Number(p.votesDown ?? 0),
+        myVote: p.myVote ?? null,
+      }));
+      setItems(mapped);
+    } catch (e: any) {
+      setError(e?.message || 'Öneriler yüklenemedi');
+    } finally {
+      setLoading(false);
+    }
+  }, [matchId]);
+
+  React.useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  async function vote(id: string, v: 'UP' | 'DOWN') {
+    try {
+      setActing(id);
+      // optimistic
+      setItems((prev) =>
+        prev.map((p) => {
+          if (p.id !== id) return p;
+          const prevVote = p.myVote;
+          let up = p.votesUp;
+          let down = p.votesDown;
+          if (prevVote === 'UP') up--;
+          if (prevVote === 'DOWN') down--;
+          if (v === 'UP') up++;
+          if (v === 'DOWN') down++;
+          return { ...p, myVote: v, votesUp: Math.max(0, up), votesDown: Math.max(0, down) };
+        }),
+      );
+
+      const r = await fetch(`${API_URL}/matches/${matchId}/time-proposals/${id}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ value: v }),
+      });
+      if (handle401(r.status)) return;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+      // gerçek değerleri tazele
+      load();
+    } catch (e: any) {
+      alert(e?.message || 'Oy gönderilemedi');
+      load();
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function applyTime(id: string) {
+    if (!isOwner) return;
+    try {
+      setActing(id);
+      const r = await fetch(`${API_URL}/matches/${matchId}/time-proposals/${id}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+      });
+      if (handle401(r.status)) return;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+      onApplied?.();
+      await load();
+    } catch (e: any) {
+      alert(e?.message || 'Saat uygulanamadı');
+    } finally {
+      setActing(null);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Clock className="size-4" />
+          <span>Saat & Tarih Önerileri</span>
+        </div>
+        <button
+          onClick={load}
+          className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+          title="Yenile"
+        >
+          <RefreshCw className="size-3.5" />
+          Yenile
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-neutral-400">Yükleniyor…</div>
+      ) : error ? (
+        <div className="text-sm text-rose-400">{error}</div>
+      ) : !items.length ? (
+        <div className="text-sm text-neutral-400">Henüz öneri yok.</div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((p) => {
+            const mine = p.by === me;
+            return (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0f141b] px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm text-neutral-100">{fmtDate(p.time)}</div>
+                  <div className="mt-0.5 flex items-center gap-2 text-[11px] text-neutral-400">
+                    <span>Öneren: {mine ? 'Siz' : 'Oyuncu'}</span>
+                    <span>•</span>
+                    <span>{fmtDate(p.createdAt)}</span>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    disabled={acting === p.id}
+                    onClick={() => vote(p.id, 'UP')}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${
+                      p.myVote === 'UP'
+                        ? 'bg-emerald-600/90 text-neutral-900'
+                        : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
+                    }`}
+                    title="Evet (bu saat uygun)"
+                  >
+                    <ThumbsUp className="size-3.5" />
+                    {p.votesUp}
+                  </button>
+                  <button
+                    disabled={acting === p.id}
+                    onClick={() => vote(p.id, 'DOWN')}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${
+                      p.myVote === 'DOWN'
+                        ? 'bg-rose-600/90 text-neutral-900'
+                        : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
+                    }`}
+                    title="Hayır (uygun değil)"
+                  >
+                    <ThumbsDown className="size-3.5" />
+                    {p.votesDown}
+                  </button>
+
+                  {isOwner && (
+                    <button
+                      disabled={acting === p.id}
+                      onClick={() => applyTime(p.id)}
+                      className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-xs text-neutral-950 hover:bg-blue-500 disabled:opacity-60"
+                      title="Maçı bu saate ayarla"
+                    >
+                      <Check className="size-3.5" />
+                      Uygula
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ======================= Sohbet Paneli ======================= */
 function MatchChat({ matchId }: { matchId: string }) {
   const me = myId();
@@ -132,7 +373,7 @@ function MatchChat({ matchId }: { matchId: string }) {
 
   const fetchMessages = React.useCallback(async () => {
     try {
-      const r = await fetch(`${API_URL}/matches/${matchId}/messages?limit=50`, {
+      const r = await fetch(`${API_URL}/matches/${matchId}/messages?limit=50`, {  
         headers: { ...authHeader() },
         cache: 'no-store',
       });
@@ -255,11 +496,18 @@ function MatchChat({ matchId }: { matchId: string }) {
                 <div key={m.id} className="flex justify-start">
                   <div className="w-full max-w-xl rounded-2xl bg-[#10151c] px-3 py-2 text-left shadow-sm ring-1 ring-white/10">
                     <div className="mb-1 flex items-center gap-2">
-                      <span className={`text-xs font-medium ${isMine ? 'text-emerald-300' : 'text-zinc-300'}`}>
+                      <span
+                        className={`text-xs font-medium ${
+                          isMine ? 'text-emerald-300' : 'text-zinc-300'
+                        }`}
+                      >
                         {isMine ? 'Siz' : 'Oyuncu'}
                       </span>
                       <span className="text-xs text-zinc-500">
-                        {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(m.createdAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
                       </span>
                     </div>
 
@@ -277,7 +525,10 @@ function MatchChat({ matchId }: { matchId: string }) {
                         }}
                         autoFocus
                       />
-                      <button onClick={saveEditMessage} className="rounded bg-emerald-600/90 px-2 py-1 text-xs hover:bg-emerald-600">
+                      <button
+                        onClick={saveEditMessage}
+                        className="rounded bg-emerald-600/90 px-2 py-1 text-xs hover:bg-emerald-600"
+                      >
                         Kaydet
                       </button>
                       <button
@@ -299,11 +550,18 @@ function MatchChat({ matchId }: { matchId: string }) {
               <div key={m.id} className="flex justify-start">
                 <div className="w-full max-w-xl rounded-2xl bg-[#10151c] px-3 py-2 text-left shadow-sm ring-1 ring-white/10">
                   <div className="mb-1 flex items-center gap-2">
-                    <span className={`text-xs font-medium ${isMine ? 'text-emerald-300' : 'text-zinc-300'}`}>
+                    <span
+                      className={`text-xs font-medium ${
+                        isMine ? 'text-emerald-300' : 'text-zinc-300'
+                      }`}
+                    >
                       {isMine ? 'Siz' : 'Oyuncu'}
                     </span>
                     <span className="text-xs text-zinc-500">
-                      {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(m.createdAt).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </span>
                   </div>
 
@@ -323,7 +581,10 @@ function MatchChat({ matchId }: { matchId: string }) {
                           >
                             Düzenle
                           </button>
-                          <button onClick={() => remove(m.id)} className="text-[11px] text-rose-300 hover:underline">
+                          <button
+                            onClick={() => remove(m.id)}
+                            className="text-[11px] text-rose-300 hover:underline"
+                          >
                             Sil
                           </button>
                         </div>
@@ -363,8 +624,8 @@ function MatchChat({ matchId }: { matchId: string }) {
 /* ======================= ÖNERİLEN DAVETLER ======================= */
 function RecommendedPanel({
   matchId,
-  needPos,            // 'ANY' | 'GK' | 'ST' ...
-  team,               // 'A' | 'B' | 'ANY'
+  needPos,
+  team,
 }: {
   matchId: string;
   needPos: string;
@@ -382,13 +643,19 @@ function RecommendedPanel({
       const qs = new URLSearchParams();
       if (needPos && needPos !== 'ANY') qs.set('pos', needPos);
       if (team && team !== 'ANY') qs.set('team', team);
-      // BE: /matches/:id/recommend-invites
-      const r = await fetch(`${API_URL}/matches/${matchId}/recommend-invites?${qs.toString()}`, {
-        headers: { ...authHeader() },
-        cache: 'no-store',
-      });
-      if (r.status === 403) { setItems([]); setLoading(false); return; }
-      
+      const r = await fetch(
+        `${API_URL}/matches/${matchId}/recommend-invites?${qs.toString()}`,
+        {
+          headers: { ...authHeader() },
+          cache: 'no-store',
+        },
+      );
+      if (r.status === 403) {
+        setItems([]);
+        setLoading(false);
+        return;
+      }
+
       if (handle401(r.status)) return;
       const data = await r.json().catch(() => ({}));
       const arr: any[] = Array.isArray(data?.items) ? data.items : [];
@@ -398,7 +665,7 @@ function RecommendedPanel({
         level: typeof x.level === 'number' ? x.level : null,
         positions: Array.isArray(x.positions) ? x.positions : null,
         distanceKm: typeof x.distanceKm === 'number' ? x.distanceKm : null,
-        ratingScore: typeof x.score === 'number' ? x.score : null, // BE 'score' alanından
+        ratingScore: typeof x.score === 'number' ? x.score : null,
         risk: null,
         invited: Boolean(x.invited),
       }));
@@ -418,7 +685,7 @@ function RecommendedPanel({
     if (inviting) return;
     setInviting(userId);
     // optimistic
-    setItems(prev => prev.map(it => it.id === userId ? { ...it, invited: true } : it));
+    setItems((prev) => prev.map((it) => (it.id === userId ? { ...it, invited: true } : it)));
     try {
       const r = await fetch(`${API_URL}/matches/${matchId}/invite`, {
         method: 'POST',
@@ -430,7 +697,7 @@ function RecommendedPanel({
       if (!r.ok || j?.ok === false) throw new Error(j?.message || 'Davet gönderilemedi');
     } catch (e: any) {
       alert(e?.message || 'Davet gönderilemedi');
-      setItems(prev => prev.map(it => it.id === userId ? { ...it, invited: false } : it));
+      setItems((prev) => prev.map((it) => (it.id === userId ? { ...it, invited: false } : it)));
     } finally {
       setInviting(null);
     }
@@ -457,14 +724,18 @@ function RecommendedPanel({
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <div className={`rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>{badge.label}</div>
+                    <div className={`rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>
+                      {badge.label}
+                    </div>
                     {typeof p.level === 'number' && (
                       <div className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-200">
                         Seviye {p.level}
                       </div>
                     )}
                     {p.distanceKm != null && (
-                      <div className="text-[10px] text-neutral-400">{p.distanceKm.toFixed(1)} km</div>
+                      <div className="text-[10px] text-neutral-400">
+                        {p.distanceKm.toFixed(1)} km
+                      </div>
                     )}
                   </div>
                   <div className="truncate text-sm text-neutral-100">{maskPhone(p.phone)}</div>
@@ -479,7 +750,9 @@ function RecommendedPanel({
                         </span>
                       ))}
                       {p.positions.length > 4 && (
-                        <span className="text-[11px] text-neutral-400">+{p.positions.length - 4}</span>
+                        <span className="text-[11px] text-neutral-400">
+                          +{p.positions.length - 4}
+                        </span>
                       )}
                     </div>
                   )}
@@ -507,35 +780,46 @@ function RecommendedPanel({
 
 /* ======================= GELEN ERİŞİM İSTEKLERİ (Owner) ======================= */
 function AccessRequestsPanel({ matchId }: { matchId: string }) {
-  const [items, setItems] = React.useState<Array<{
-    id: string;
-    userId: string;
-    phone: string | null;
-    level: number | null;
-    positions: string[];
-    message: string | null;
-    createdAt: string;
-  }>>([]);
+  const [items, setItems] = React.useState<
+    Array<{
+      id: string;
+      userId: string;
+      phone: string | null;
+      level: number | null;
+      positions: string[];
+      message: string | null;
+      createdAt: string;
+    }>
+  >([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState<string | null>(null);
   const [acting, setActing] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async () => {
-    setLoading(true); setErr(null);
-    try {
-      const r = await fetch(`${API_URL}/matches/${matchId}/requests`, { headers: { ...authHeader() }, cache: 'no-store' });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
-      const arr = Array.isArray(j?.items) ? j.items : [];
-      setItems(arr);
-    } catch (e: any) {
-      setErr(e?.message || 'İstekler alınamadı');
-    } finally {
-      setLoading(false);
-    }
-  }, [matchId]);
+  const load = React.useCallback(
+    async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const r = await fetch(`${API_URL}/matches/${matchId}/requests`, {
+          headers: { ...authHeader() },
+          cache: 'no-store',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+        const arr = Array.isArray(j?.items) ? j.items : [];
+        setItems(arr);
+      } catch (e: any) {
+        setErr(e?.message || 'İstekler alınamadı');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [matchId],
+  );
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    load();
+  }, [load]);
 
   async function respond(reqId: string, action: 'APPROVE' | 'DECLINE') {
     if (acting) return;
@@ -548,7 +832,7 @@ function AccessRequestsPanel({ matchId }: { matchId: string }) {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
-      setItems(prev => prev.filter(x => x.id !== reqId));
+      setItems((prev) => prev.filter((x) => x.id !== reqId));
     } catch (e: any) {
       alert(e?.message || 'İşlem başarısız');
     } finally {
@@ -560,7 +844,12 @@ function AccessRequestsPanel({ matchId }: { matchId: string }) {
     <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm font-semibold">Gelen erişim istekleri</div>
-        <button onClick={load} className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700">Yenile</button>
+        <button
+          onClick={load}
+          className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+        >
+          Yenile
+        </button>
       </div>
 
       {loading ? (
@@ -571,24 +860,39 @@ function AccessRequestsPanel({ matchId }: { matchId: string }) {
         <div className="text-sm text-neutral-400">Bekleyen istek yok.</div>
       ) : (
         <div className="space-y-2">
-          {items.map(it => (
-            <div key={it.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0f141b] px-3 py-2">
+          {items.map((it) => (
+            <div
+              key={it.id}
+              className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0f141b] px-3 py-2"
+            >
               <div className="min-w-0">
                 <div className="text-sm text-neutral-100">{maskPhone(it.phone)}</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
                   {typeof it.level === 'number' ? <span>Seviye {it.level}</span> : null}
                   {Array.isArray(it.positions) && it.positions.length ? (
                     <span className="flex flex-wrap gap-1">
-                      {it.positions.slice(0, 3).map(p => (
-                        <span key={p} className="rounded border border-white/10 px-1.5 py-0.5">{p}</span>
+                      {it.positions.slice(0, 3).map((p) => (
+                        <span
+                          key={p}
+                          className="rounded border border-white/10 px-1.5 py-0.5"
+                        >
+                          {p}
+                        </span>
                       ))}
-                      {it.positions.length > 3 ? <span>+{it.positions.length - 3}</span> : null}
+                      {it.positions.length > 3 ? (
+                        <span>+{it.positions.length - 3}</span>
+                      ) : null}
                     </span>
                   ) : null}
-                  {it.message ? <span className="truncate max-w-[280px] text-neutral-300">“{it.message}”</span> : null}
+                  {it.message ? (
+                    <span className="max-w-[280px] truncate text-neutral-300">“{it.message}”</span>
+                  ) : null}
                 </div>
                 <div className="text-[10px] text-neutral-500">
-                  {new Date(it.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                  {new Date(it.createdAt).toLocaleString([], {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  })}
                 </div>
               </div>
 
@@ -616,15 +920,18 @@ function AccessRequestsPanel({ matchId }: { matchId: string }) {
   );
 }
 
-
 /* ==================== DETAY SAYFASI ==================== */
 export default function MatchDetailClient({ id }: { id: string }) {
   const me = myId();
-
+  const currentUserId = myId(); // Mevcut kullanıcı ID'si
   const [m, setM] = React.useState<MatchDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [locking, setLocking] = React.useState(false);
+
+  const [suggestOpen, setSuggestOpen] = React.useState(false);
+  const [suggestWhen, setSuggestWhen] = React.useState('');
+  const [suggestSending, setSuggestSending] = React.useState(false);
 
   // Düzenleme modal state’i
   const [editOpen, setEditOpen] = React.useState(false);
@@ -641,31 +948,47 @@ export default function MatchDetailClient({ id }: { id: string }) {
   // Davet modal state
   const [inviteOpen, setInviteOpen] = React.useState(false);
 
-  const refresh = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`${API_URL}/matches/${id}`, {
-        headers: { ...authHeader() }, // <- header ekledik
-        cache: 'no-store',
-      });
-      if (r.status === 403) {
-        alert('Bu maç kilitli. Detayı sadece katılımcılar veya davetliler görebilir.');
-        window.location.href = '/landing';
-        return;
+  const refresh = React.useCallback(
+    async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`${API_URL}/matches/${id}`, {
+          headers: { ...authHeader() },
+          cache: 'no-store',
+        });
+        if (r.status === 403) {
+          alert('Bu maç kilitli. Detayı sadece katılımcılar veya davetliler görebilir.');
+          window.location.href = '/landing';
+          return;
+        }
+        const data = await r.json();
+        const slots: Slot[] = Array.isArray(data?.slots) ? data.slots : [];
+        setM({ ...data, slots });
+      } catch (e) {
+        console.error(e);
+        setM(null);
+      } finally {
+        setLoading(false);
       }
-      const data = await r.json();
-      const slots: Slot[] = Array.isArray(data?.slots) ? data.slots : [];
-      setM({ ...data, slots });
-    } catch (e) {
-      console.error(e);
-      setM(null);
-    } finally {
-      setLoading(false);
+    },
+    [id],
+  );
+
+  React.useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // 🔥 DEBUG: BURAYI EKLE
+  React.useEffect(() => {
+    if (m) {
+      console.log('🔥 MATCH DATA:', m);
+      console.log('🔥 SLOTS:', m.slots);
+      console.log('🔥 SLOTS LENGTH:', m.slots?.length);
+      console.log('🔥 createdFrom:', m.createdFrom);
+      console.log('🔥 TEAM A SLOTS:', teamA);
+      console.log('🔥 TEAM B SLOTS:', teamB);
     }
-  }, [id]);
-
-
-  React.useEffect(() => { refresh(); }, [refresh]);
+  }, [m]);
 
   // --- Kilit toggle ---
   async function toggleLock() {
@@ -701,12 +1024,13 @@ export default function MatchDetailClient({ id }: { id: string }) {
   }, [editOpen, m]);
 
   const isOwner = !!m && me === m.ownerId;
+  const canEdit = !!m?.access?.canEdit;
 
   const mySlot = m?.slots?.find((s) => s.userId === me) || null;
   const teamA = (m?.slots || []).filter((s) => s.team === 'A');
   const teamB = (m?.slots || []).filter((s) => s.team === 'B');
 
-  // Doluluk / Yedek uygunluğu (placeholder dolu sayılır)
+  // Doluluk / Yedek uygunluğu
   const coreA = teamA.filter((s) => s.pos !== 'SUB');
   const coreB = teamB.filter((s) => s.pos !== 'SUB');
   const isFullA = coreA.length > 0 && coreA.every((s) => !isFree(s));
@@ -714,20 +1038,24 @@ export default function MatchDetailClient({ id }: { id: string }) {
   const canSubA = teamA.some((s) => s.pos === 'SUB' && isFree(s));
   const canSubB = teamB.some((s) => s.pos === 'SUB' && isFree(s));
 
-  // İhtiyaç pozisyonu (öneriler için) — boşluk hesabı isFree ile
+  // İhtiyaç pozisyonu (öneriler için)
   function calcNeeds(slots: Slot[], team?: Team) {
     const list = slots.filter((s) => s.pos !== 'SUB' && (!team || s.team === team));
     const map = new Map<string, number>();
     for (const s of list) {
       if (isFree(s)) map.set(s.pos, (map.get(s.pos) || 0) + 1);
     }
-    return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([pos]) => pos);
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([pos]) => pos);
   }
   const needA = calcNeeds(m?.slots || [], 'A');
   const needB = calcNeeds(m?.slots || [], 'B');
   const defaultNeed = (needA[0] || needB[0] || 'ANY') as string;
   const [focusPos, setFocusPos] = React.useState<string>(defaultNeed);
-  const [focusTeam, setFocusTeam] = React.useState<'A' | 'B' | 'ANY'>(needA.length ? 'A' : needB.length ? 'B' : 'ANY');
+  const [focusTeam, setFocusTeam] = React.useState<'A' | 'B' | 'ANY'>(
+    needA.length ? 'A' : needB.length ? 'B' : 'ANY',
+  );
 
   React.useEffect(() => {
     setFocusPos(defaultNeed);
@@ -735,7 +1063,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m?.id, m?.slots?.length]);
 
-  /** Takıma pozisyonsuz katıl (tercihlerden uygun olanı backend seçer) */
+  /** Takıma pozisyonsuz katıl */
   async function joinTeam(team: Team) {
     try {
       setBusy(true);
@@ -745,7 +1073,10 @@ export default function MatchDetailClient({ id }: { id: string }) {
         body: JSON.stringify({ matchId: id, team }),
       });
       if (handle401(r.status)) return;
-      if (r.status === 403) { alert('Bu maç kilitli. Davet gerekiyor.'); return; }
+      if (r.status === 403) {
+        alert('Bu maç kilitli. Davet gerekiyor.');
+        return;
+      }
 
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -763,6 +1094,29 @@ export default function MatchDetailClient({ id }: { id: string }) {
     }
   }
 
+  /** Belirli bir zaman öner */
+  async function sendTimeSuggestion() {
+    if (!m || !suggestWhen) return;
+    try {
+      setSuggestSending(true);
+      const r = await fetch(`${API_URL}/matches/${m.id}/propose-time`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ time: new Date(suggestWhen).toISOString() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+      setSuggestOpen(false);
+      setSuggestWhen('');
+      // Öneri gönderildi – TimeProposalsPanel kendini poll ediyor ama yine de kullanıcı hissi için:
+      // (Eğer aşağıdaki panel refetch istiyorsan bir event gönderebilirdik; poll yeterli.)
+    } catch (e: any) {
+      alert(e?.message || 'Öneri gönderilemedi');
+    } finally {
+      setSuggestSending(false);
+    }
+  }
+
   /** Belirli bir pozisyona, belirtilen takımda katıl. */
   async function joinSpecific(team: Team, pos: string) {
     try {
@@ -773,7 +1127,10 @@ export default function MatchDetailClient({ id }: { id: string }) {
         body: JSON.stringify({ matchId: id, pos, team }),
       });
       if (handle401(r.status)) return;
-      if (r.status === 403) { alert('Bu maç kilitli. Davet gerekiyor.'); return; }
+      if (r.status === 403) {
+        alert('Bu maç kilitli. Davet gerekiyor.');
+        return;
+      }
 
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.message || 'Katılım başarısız');
@@ -785,7 +1142,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
     }
   }
 
-  /** Takım yedeği (SUB) olarak katıl – sadece boş SUB varsa gösteriyoruz */
+  /** Yedek olarak katıl */
   async function joinAsSub(team: Team) {
     try {
       setBusy(true);
@@ -795,7 +1152,10 @@ export default function MatchDetailClient({ id }: { id: string }) {
         body: JSON.stringify({ matchId: id, team, pos: 'SUB' }),
       });
       if (handle401(r.status)) return;
-      if (r.status === 403) { alert('Bu maç kilitli. Davet gerekiyor.'); return; }
+      if (r.status === 403) {
+        alert('Bu maç kilitli. Davet gerekiyor.');
+        return;
+      }
 
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok !== true) throw new Error(j?.message || 'Katılım başarısız');
@@ -869,14 +1229,23 @@ export default function MatchDetailClient({ id }: { id: string }) {
     try {
       setSavingEdit(true);
 
-      const body: any = {
-        title: editForm.title || null,
-        location: editForm.location || null,
-        level: editForm.level || null,
-        format: editForm.format || null,
-        price: editForm.price === '' ? null : Number(editForm.price),
-        time: editForm.time ? new Date(editForm.time).toISOString() : null,
-      };
+      let body: any;
+      if (isOwner) {
+        body = {
+          title: editForm.title || null,
+          location: editForm.location || null,
+          level: editForm.level || null,
+          format: editForm.format || null,
+          price: editForm.price === '' ? null : Number(editForm.price),
+          time: editForm.time ? new Date(editForm.time).toISOString() : null,
+        };
+      } else {
+        // TAKIM ADMINI: sadece konum + zaman
+        body = {
+          location: editForm.location || null,
+          time: editForm.time ? new Date(editForm.time).toISOString() : null,
+        };
+      }
 
       const r = await fetch(`${API_URL}/matches/${m.id}/edit`, {
         method: 'POST',
@@ -920,7 +1289,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
           >
             ← Ana menü
           </Link>
-          <div className="text-base font-semibold flex items-center gap-2">
+          <div className="flex items-center gap-2 text-base font-semibold">
             <span>{m.title || 'Maç'}</span>
             {m.inviteOnly ? (
               <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs">Kilitli</span>
@@ -928,7 +1297,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
           </div>
         </div>
 
-        {/* Sağ taraf: Arkadaşlar + Davetler + (opsiyonel) Düzenle + Kilit */}
+        {/* Sağ taraf: Arkadaşlar + Aksiyonlar */}
         <div className="flex items-center gap-2">
           <Link
             href="/friends"
@@ -946,23 +1315,38 @@ export default function MatchDetailClient({ id }: { id: string }) {
             Davetler
           </Link>
 
+          {/* SADECE SAHİP: Düzenle */}
           {isOwner && (
-            <>
-              <button
-                onClick={() => setEditOpen(true)}
-                className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-              >
-                Düzenle
-              </button>
-              <button
-                onClick={toggleLock}
-                disabled={locking}
-                className={`rounded-xl px-3 py-1.5 text-sm ${m.inviteOnly ? 'bg-rose-700 hover:bg-rose-600' : 'bg-neutral-800 hover:bg-neutral-700'}`}
-                title="Kilit: Sadece davetle katılım"
-              >
-                {locking ? '...' : m.inviteOnly ? 'Kilit Aç' : 'Kilit Kapat'}
-              </button>
-            </>
+            <button
+              onClick={() => setEditOpen(true)}
+              className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+            >
+              Düzenle
+            </button>
+          )}
+
+          {/* TAKIM MAÇI — SAHİP DEĞİL ama canEdit: Saat & Tarih Öner */}
+          {m.createdFrom === 'TEAM_MATCH' && !isOwner && canEdit && (
+            <button
+              onClick={() => setSuggestOpen(true)}
+              className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+            >
+              Saat & Tarih Öner
+            </button>
+          )}
+
+          {/* SADECE SAHİP: Kilit */}
+          {isOwner && (
+            <button
+              onClick={toggleLock}
+              disabled={locking}
+              className={`rounded-xl px-3 py-1.5 text-sm ${
+                m.inviteOnly ? 'bg-rose-700 hover:bg-rose-600' : 'bg-neutral-800 hover:bg-neutral-700'
+              }`}
+              title="Kilit: Sadece davetle katılım"
+            >
+              {locking ? '...' : m.inviteOnly ? 'Kilit Aç' : 'Kilit Kapat'}
+            </button>
           )}
         </div>
       </div>
@@ -973,11 +1357,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
         {m.time ? (
           <>
             {' '}
-            • Saat:{' '}
-            {new Date(m.time).toLocaleString([], {
-              dateStyle: 'short',
-              timeStyle: 'short',
-            })}
+            • Saat: {fmtDate(m.time)}
           </>
         ) : null}
         <> • ID: {m.id}</>
@@ -1061,14 +1441,14 @@ export default function MatchDetailClient({ id }: { id: string }) {
               const isEmpty = isFree(s);
 
               const badgeIcon =
-                s.placeholder === 'ADMIN'
-                  ? <Shield className="ml-1 size-3.5 opacity-80" aria-label="Admin rezervi" />
-                  : s.placeholder === 'GUEST'
-                  ? <UserPlus className="ml-1 size-3.5 opacity-80" aria-label="Misafir (+1)" />
-                  : null;
+                s.placeholder === 'ADMIN' ? (
+                  <Shield className="ml-1 size-3.5 opacity-80" aria-label="Admin rezervi" />
+                ) : s.placeholder === 'GUEST' ? (
+                  <UserPlus className="ml-1 size-3.5 opacity-80" aria-label="Misafir (+1)" />
+                ) : null;
 
-
-              const baseCls = 'rounded-full px-3 py-1 text-sm border select-none inline-flex items-center gap-2';
+              const baseCls =
+                'rounded-full px-3 py-1 text-sm border select-none inline-flex items-center gap-2';
               const stateCls = isMine
                 ? 'border-emerald-400 text-emerald-400'
                 : isEmpty
@@ -1083,15 +1463,16 @@ export default function MatchDetailClient({ id }: { id: string }) {
                     isMine
                       ? 'Senin pozisyonun'
                       : isEmpty
-                        ? 'Boş — tıkla'
-                        : s.placeholder === 'ADMIN'
-                          ? 'Admin rezervi'
-                          : s.placeholder === 'GUEST'
-                            ? 'Misafir rezervi (+1)'
-                            : 'Dolu'
+                      ? 'Boş — tıkla'
+                      : s.placeholder === 'ADMIN'
+                      ? 'Admin rezervi'
+                      : s.placeholder === 'GUEST'
+                      ? 'Misafir rezervi (+1)'
+                      : 'Dolu'
                   }
-
-                  onClick={() => { if (isEmpty && !mySlot && !busy) joinSpecific('A', s.pos); }}
+                  onClick={() => {
+                    if (isEmpty && !mySlot && !busy) joinSpecific('A', s.pos);
+                  }}
                 >
                   {labelPos(s.pos)}
                   {badgeIcon}
@@ -1102,26 +1483,35 @@ export default function MatchDetailClient({ id }: { id: string }) {
                         <button
                           title="Admin rezervi"
                           className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
-                          onClick={(e) => { e.stopPropagation(); reserve('A', s.pos, 'ADMIN'); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            reserve('A', s.pos, 'ADMIN');
+                          }}
                         >
                           <Shield className="size-3.5" />
                         </button>
                       )}
-                        <button
-                          title="Misafir rezervi (+1)"
-                          className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
-                          onClick={(e) => { e.stopPropagation(); reserve('A', s.pos, 'GUEST'); }}
-                        >
-                          <UserPlus className="size-3.5" />
-                        </button>
-                      </span>
-                    ) : s.placeholder ? (
                       <button
-                        className="ml-2 text-[10px] underline"
-                        onClick={(e) => { e.stopPropagation(); unreserve('A', s.pos); }}
+                        title="Misafir rezervi (+1)"
+                        className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          reserve('A', s.pos, 'GUEST');
+                        }}
                       >
-                        Kaldır
+                        <UserPlus className="size-3.5" />
                       </button>
+                    </span>
+                  ) : s.placeholder ? (
+                    <button
+                      className="ml-2 text-[10px] underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        unreserve('A', s.pos);
+                      }}
+                    >
+                      Kaldır
+                    </button>
                   ) : null}
                 </span>
               );
@@ -1138,13 +1528,14 @@ export default function MatchDetailClient({ id }: { id: string }) {
               const isEmpty = isFree(s);
 
               const badgeIcon =
-                s.placeholder === 'ADMIN'
-                  ? <Shield className="ml-1 size-3.5 opacity-80" aria-label="Admin rezervi" />
-                  : s.placeholder === 'GUEST'
-                  ? <UserPlus className="ml-1 size-3.5 opacity-80" aria-label="Misafir (+1)" />
-                  : null;
+                s.placeholder === 'ADMIN' ? (
+                  <Shield className="ml-1 size-3.5 opacity-80" aria-label="Admin rezervi" />
+                ) : s.placeholder === 'GUEST' ? (
+                  <UserPlus className="ml-1 size-3.5 opacity-80" aria-label="Misafir (+1)" />
+                ) : null;
 
-              const baseCls = 'rounded-full px-3 py-1 text-sm border select-none inline-flex items-center gap-2';
+              const baseCls =
+                'rounded-full px-3 py-1 text-sm border select-none inline-flex items-center gap-2';
               const stateCls = isMine
                 ? 'border-emerald-400 text-emerald-400'
                 : isEmpty
@@ -1159,14 +1550,16 @@ export default function MatchDetailClient({ id }: { id: string }) {
                     isMine
                       ? 'Senin pozisyonun'
                       : isEmpty
-                        ? 'Boş — tıkla'
-                        : s.placeholder === 'ADMIN'
-                          ? 'Admin rezervi'
-                          : s.placeholder === 'GUEST'
-                            ? 'Misafir rezervi (+1)'
-                            : 'Dolu'
+                      ? 'Boş — tıkla'
+                      : s.placeholder === 'ADMIN'
+                      ? 'Admin rezervi'
+                      : s.placeholder === 'GUEST'
+                      ? 'Misafir rezervi (+1)'
+                      : 'Dolu'
                   }
-                  onClick={() => { if (isEmpty && !mySlot && !busy) joinSpecific('B', s.pos); }}
+                  onClick={() => {
+                    if (isEmpty && !mySlot && !busy) joinSpecific('B', s.pos);
+                  }}
                 >
                   {labelPos(s.pos)}
                   {badgeIcon}
@@ -1177,7 +1570,10 @@ export default function MatchDetailClient({ id }: { id: string }) {
                         <button
                           title="Admin rezervi"
                           className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
-                          onClick={(e) => { e.stopPropagation(); reserve('B', s.pos, 'ADMIN'); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            reserve('B', s.pos, 'ADMIN');
+                          }}
                         >
                           <Shield className="size-3.5" />
                         </button>
@@ -1185,7 +1581,10 @@ export default function MatchDetailClient({ id }: { id: string }) {
                       <button
                         title="Misafir rezervi (+1)"
                         className="rounded bg-neutral-700/70 p-1 hover:bg-neutral-700"
-                        onClick={(e) => { e.stopPropagation(); reserve('B', s.pos, 'GUEST'); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          reserve('B', s.pos, 'GUEST');
+                        }}
                       >
                         <UserPlus className="size-3.5" />
                       </button>
@@ -1193,7 +1592,10 @@ export default function MatchDetailClient({ id }: { id: string }) {
                   ) : s.placeholder ? (
                     <button
                       className="ml-2 text-[10px] underline"
-                      onClick={(e) => { e.stopPropagation(); unreserve('B', s.pos); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        unreserve('B', s.pos);
+                      }}
                     >
                       Kaldır
                     </button>
@@ -1206,58 +1608,73 @@ export default function MatchDetailClient({ id }: { id: string }) {
       </div>
 
       {/* Düzenleme Modalı */}
-      {isOwner && editOpen && (
+      {canEdit && editOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
           <div className="w-full max-w-md space-y-2 rounded-2xl bg-neutral-900 p-4 ring-1 ring-white/10">
             <div className="text-base font-semibold">Maçı Düzenle</div>
 
-            <input
-              className="w-full rounded bg-neutral-800 px-3 py-2"
-              placeholder="Başlık"
-              value={editForm.title}
-              onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-            />
-
-            <input
-              className="w-full rounded bg-neutral-800 px-3 py-2"
-              placeholder="Konum"
-              value={editForm.location}
-              onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
-            />
-
-            <input
-              className="w-full rounded bg-neutral-800 px-3 py-2"
-              placeholder="Seviye (Kolay/Orta/Zor)"
-              value={editForm.level}
-              onChange={(e) => setEditForm((f) => ({ ...f, level: e.target.value }))}
-            />
-
-            <input
-              className="w-full rounded bg-neutral-800 px-3 py-2"
-              placeholder="Format (5v5 / 6v6 / 7v7 / 8v8 / 9v9 / 10v10 / 11v11)"
-              value={editForm.format}
-              onChange={(e) => setEditForm((f) => ({ ...f, format: e.target.value }))}
-            />
-
-            <input
-              className="w-full rounded bg-neutral-800 px-3 py-2"
-              type="number"
-              placeholder="Fiyat"
-              value={editForm.price as any}
-              onChange={(e) =>
-                setEditForm((f) => ({
-                  ...f,
-                  price: e.target.value === '' ? '' : Number(e.target.value),
-                }))
-              }
-            />
-
-            <input
-              className="w-full rounded bg-neutral-800 px-3 py-2"
-              type="datetime-local"
-              value={editForm.time}
-              onChange={(e) => setEditForm((f) => ({ ...f, time: e.target.value }))}
-            />
+            {isOwner ? (
+              <>
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  placeholder="Başlık"
+                  value={editForm.title}
+                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                />
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  placeholder="Konum"
+                  value={editForm.location}
+                  onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                />
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  placeholder="Seviye (Kolay/Orta/Zor)"
+                  value={editForm.level}
+                  onChange={(e) => setEditForm((f) => ({ ...f, level: e.target.value }))}
+                />
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  placeholder="Format (5v5 / 7v7 / 9v9 / 11v11)"
+                  value={editForm.format}
+                  onChange={(e) => setEditForm((f) => ({ ...f, format: e.target.value }))}
+                />
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  type="number"
+                  placeholder="Fiyat"
+                  value={editForm.price as any}
+                  onChange={(e) =>
+                    setEditForm((f) => ({
+                      ...f,
+                      price: e.target.value === '' ? '' : Number(e.target.value),
+                    }))
+                  }
+                />
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  type="datetime-local"
+                  value={editForm.time}
+                  onChange={(e) => setEditForm((f) => ({ ...f, time: e.target.value }))}
+                />
+              </>
+            ) : (
+              <>
+                {/* OWNER DEĞİLSE: sadece Konum + Tarih/Saat */}
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  placeholder="Konum"
+                  value={editForm.location}
+                  onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                />
+                <input
+                  className="w-full rounded bg-neutral-800 px-3 py-2"
+                  type="datetime-local"
+                  value={editForm.time}
+                  onChange={(e) => setEditForm((f) => ({ ...f, time: e.target.value }))}
+                />
+              </>
+            )}
 
             <div className="mt-2 flex justify-end gap-2">
               <button
@@ -1278,9 +1695,47 @@ export default function MatchDetailClient({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Davet mini + Önerilenler + modal + Sohbet */}
+      {/* Saat & Tarih Öner Modalı */}
+      {m.createdFrom === 'TEAM_MATCH' && !isOwner && canEdit && suggestOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
+          <div className="w-full max-w-md space-y-2 rounded-2xl bg-neutral-900 p-4 ring-1 ring-white/10">
+            <div className="text-base font-semibold">Saat & Tarih Öner</div>
+
+            <input
+              className="w-full rounded bg-neutral-800 px-3 py-2"
+              type="datetime-local"
+              value={suggestWhen}
+              onChange={(e) => setSuggestWhen(e.target.value)}
+            />
+
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                onClick={() => setSuggestOpen(false)}
+                className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+              >
+                İptal
+              </button>
+              <button
+                onClick={sendTimeSuggestion}
+                disabled={!suggestWhen || suggestSending}
+                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {suggestSending ? 'Gönderiliyor…' : 'Gönder'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Davet mini + (Owner için Access) + Öneriler + Sohbet */}
       <InviteMini matchId={m.id} onOpenInvite={() => setInviteOpen(true)} />
       {isOwner ? <AccessRequestsPanel matchId={m.id} /> : null}
+
+      {/* Saat & Tarih Önerileri paneli (herkes görebilir, owner uygulayabilir) */}
+      {/* SADECE NORMAL MAÇTA: TimeProposalsPanel */}
+      {m.createdFrom !== 'TEAM_MATCH' && (
+        <TimeProposalsPanel matchId={m.id} isOwner={isOwner} onApplied={refresh} />
+      )}
 
       {/* İhtiyaç seçiciler */}
       <div className="flex flex-wrap items-center gap-2">
@@ -1301,7 +1756,9 @@ export default function MatchDetailClient({ id }: { id: string }) {
         >
           <option value="ANY">Pozisyon (hepsi)</option>
           {[...new Set([...needA, ...needB])].map((p) => (
-            <option key={p} value={p}>{p}</option>
+            <option key={p} value={p}>
+              {p}
+            </option>
           ))}
         </select>
       </div>
@@ -1310,6 +1767,12 @@ export default function MatchDetailClient({ id }: { id: string }) {
 
       <InviteFriendsClient open={inviteOpen} onClose={() => setInviteOpen(false)} matchId={m.id} />
       <MatchChat matchId={m.id} />
+      {/* Saat & Tarih Önerileri - SADECE TAKIM MAÇLARI */}
+      {currentUserId && m.createdFrom === 'TEAM_MATCH' && (
+        <div className="mt-6">
+          <MatchProposalsSection matchId={id} currentUserId={currentUserId} />
+        </div>
+      )}
     </div>
   );
 }

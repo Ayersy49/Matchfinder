@@ -159,5 +159,72 @@ export async function offerOpponentSafe(requestId: string, teamId: string): Prom
   }
 }
 
+// lib/api.ts (MEVCUT DOSYANIN SONUNA EKLE)
+
+// ===== MATCH PROPOSALS (Tarih/Saat Önerileri) =====
+
+export interface MatchProposal {
+  id: string;
+  matchId: string;
+  proposedBy: string;
+  proposedDate: string;
+  proposer: {
+    id: string;
+    phone: string;
+  };
+  votes: Array<{
+    id: string;
+    userId: string;
+    vote: 'ACCEPT' | 'REJECT';
+    user: {
+      id: string;
+      phone: string;
+    };
+  }>;
+  acceptCount: number;
+  rejectCount: number;
+  userVote: 'ACCEPT' | 'REJECT' | null;
+  createdAt: string;
+}
+
+/**
+ * Maç önerilerini getir
+ */
+export function getMatchProposals(matchId: string) {
+  return api<MatchProposal[]>(`/matches/${matchId}/proposals`);
+}
+
+/**
+ * Yeni öneri oluştur
+ */
+export function createMatchProposal(matchId: string, proposedDate: string) {
+  return api<MatchProposal>(`/matches/${matchId}/proposals`, {
+    method: 'POST',
+    body: JSON.stringify({ proposedDate }),
+  });
+}
+
+/**
+ * Öneriye oy ver
+ */
+export function voteMatchProposal(
+  matchId: string,
+  proposalId: string,
+  vote: 'ACCEPT' | 'REJECT'
+) {
+  return api<{ ok: boolean }>(`/matches/${matchId}/proposals/${proposalId}/vote`, {
+    method: 'POST',
+    body: JSON.stringify({ vote }),
+  });
+}
+
+/**
+ * Öneriyi sil
+ */
+export function deleteMatchProposal(matchId: string, proposalId: string) {
+  return api<{ message: string }>(`/matches/${matchId}/proposals/${proposalId}`, {
+    method: 'DELETE',
+  });
+}
 
 

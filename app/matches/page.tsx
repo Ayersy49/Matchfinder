@@ -27,19 +27,30 @@ type MatchLite = {
   id: string;
   title?: string | null;
   location?: string | null;
-  level?: "Kolay" | "Orta" | "Zor" | string | null;
-  format?: "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11" | string | null;
+  level?: "Kolay" | "Orta" | "Zor" | null;
+  format?: string | null;
   price?: number | null;
   time?: string | null; // ISO
   inviteOnly?: boolean | null;
 
-  // ---- opsiyonel backend alanları (takım maçı highlight için) ----
+  // ---- takım maçı highlight meta ----
   createdFrom?: string | null;     // 'TEAM_MATCH'
   highlightUntil?: string | null;  // ISO
   teamAId?: string | null;
   teamBId?: string | null;
-  isTeamMatch?: boolean | null;    // bazı backendler bool dönebilir
+  isTeamMatch?: boolean | null;
+
+  // ---- BACKEND zaten gönderiyor (performans için kullanacağız) ----
+  slots?: Slot[]; // <— YENİ
+  statusEffective?: "OPEN" | "CLOSED" | "DRAFT"; // <— YENİ
+  access?: { // <— YENİ
+    owner?: boolean;
+    joined?: boolean;
+    canView?: boolean;
+    requestPending?: boolean;
+  } | null;
 };
+
 
 const POSITIONS = [
   "GK",
@@ -171,32 +182,22 @@ export default function MatchesPage() {
     setError(null);
     try {
       const [resMatches, myTeamsApi] = await Promise.all([
-        fetch(`${API_URL}/matches`, { cache: "no-store", headers: { ...authHeader() } }),
+        fetch(`${API_URL}/matches?hidePast=1`, { cache: "no-store", headers: { ...authHeader() } }),
         getMyTeams().catch(() => []),
       ]);
-      const json = await safeJson<MatchLite[]>(resMatches);
-      if (!resMatches.ok) throw new Error(`HTTP ${resMatches.status}`);
 
+      const json = await safeJson<MatchLite[]>(resMatches);
       const list = Array.isArray(json) ? json : [];
+
       setItems(list);
       setMyTeams(Array.isArray(myTeamsApi) ? myTeamsApi : []);
 
-      // N+1 (MVP): detayları çek
-      const detEntries = await Promise.all(
-        list.map(async (m) => {
-          try {
-            const r = await fetch(`${API_URL}/matches/${m.id}`, {
-              cache: "no-store",
-              headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
-            });
-            const d = await safeJson<MatchDetail>(r);
-            return [m.id, d ?? { id: m.id, slots: [] }] as const;
-          } catch {
-            return [m.id, { id: m.id, slots: [] }] as const;
-          }
-        }),
-      );
-      setDetails(Object.fromEntries(detEntries));
+      // Detayları liste cevabındaki slots ile hydrate et
+      const detObj: Record<string, MatchDetail> = {};
+      for (const m of list) {
+        detObj[m.id] = { id: m.id, slots: Array.isArray((m as any).slots) ? (m as any).slots : [] };
+      }
+      setDetails(detObj);
     } catch (e: any) {
       setError(e?.message || "Yükleme hatası");
     } finally {
