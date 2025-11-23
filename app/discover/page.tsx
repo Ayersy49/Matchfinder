@@ -4,7 +4,26 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { authHeader } from '@/lib/auth';
+
+/** ---- Basit token + header yardımcıları (opsiyonel; cookie yoksa devreye girer) ---- */
+const getToken = () => {
+  try {
+    return (
+      localStorage.getItem('token') ||
+      localStorage.getItem('access_token') ||
+      localStorage.getItem('jwt') ||
+      ''
+    );
+  } catch {
+    return '';
+  }
+};
+
+// Her durumda HeadersInit dönen, TS uyumlu yardımcı
+const AUTH_HEADERS = (): Record<string, string> => {
+  const t = (getToken() || '').trim();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+};
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 const DISCOVER_ENDPOINT = '/users/discover';
@@ -24,52 +43,62 @@ export default function DiscoverPage() {
   const params = useSearchParams();
   const presetMatchId = params.get('matchId') ?? undefined;
 
+  // isteğe bağlı filtre parametreleri
+  const whenISO = params.get('for') ?? undefined;
+  const dowQ = params.get('dow') ?? undefined;
+  const atQ = params.get('at') ?? undefined;
+  const posQ = params.get('pos') ?? undefined;
+
   const [lat, setLat] = React.useState<number | null>(null);
   const [lng, setLng] = React.useState<number | null>(null);
-  const [radius, setRadius] = React.useState<number>(30); // 5 yerine 30
+  const [radius, setRadius] = React.useState<number>(30);
   const [loading, setLoading] = React.useState(false);
   const [items, setItems] = React.useState<Player[]>([]);
   const [discoverable, setDiscoverable] = React.useState<boolean>(true);
+  const [authError, setAuthError] = React.useState<string | null>(null);
 
-  // --- discoverable'ı kalıcı yap: önce localStorage, sonra sunucu ile eşitle ---
+  // 1) discoverable + konum bilgilerini me’den oku
   React.useEffect(() => {
-    // 1) localStorage
-    try {
-      const raw = localStorage.getItem(LS_DISCOVER);
-      if (raw === 'true' || raw === 'false') setDiscoverable(raw === 'true');
-    } catch {}
-
-    // 2) sunucudan da varsa oku (me objesi discoverable döndürmüyorsa bu blok sessizce geçer)
     (async () => {
       try {
-        const r = await fetch(`${API_URL}/users/me`, { headers: { ...authHeader() }, cache: 'no-store' });
-        if (!r.ok) return;
+        const r = await fetch(`${API_URL}/users/me`, {
+          headers: { ...AUTH_HEADERS() },
+          credentials: 'include', // <-- ÖNEMLİ
+          cache: 'no-store',
+        });
+        if (!r.ok) {
+          if (r.status === 401) setAuthError('Giriş yapman gerekiyor.');
+          return;
+        }
         const me = await r.json().catch(() => ({}));
         if (typeof me?.discoverable === 'boolean') {
-          setDiscoverable(me.discoverable);
-          try { localStorage.setItem(LS_DISCOVER, String(me.discoverable)); } catch {}
+          setDiscoverable(!!me.discoverable);
+          try {
+            localStorage.setItem(LS_DISCOVER, String(!!me.discoverable));
+          } catch {}
         }
         if (typeof me?.lat === 'number') setLat(me.lat);
         if (typeof me?.lng === 'number') setLng(me.lng);
-      } catch {}
+      } catch {
+        /* yut */
+      }
     })();
   }, []);
 
-  // --- konumu al ve sadece konumu güncelle (discoverable'a dokunma) ---
+  // 2) tarayıcı konumunu al ve yalnızca konumu güncelle (discoverable’a dokunma)
   React.useEffect(() => {
     if (!navigator.geolocation) return;
-
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const la = pos.coords.latitude;
         const ln = pos.coords.longitude;
         setLat(la);
         setLng(ln);
-
         try {
           await fetch(`${API_URL}/users/me/location`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...authHeader() },
+            headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS() },
+            credentials: 'include', // <-- ÖNEMLİ
             body: JSON.stringify({ lat: la, lng: ln }),
           });
         } catch {}
@@ -79,13 +108,14 @@ export default function DiscoverPage() {
     );
   }, []);
 
-  // --- Keşifte görünürlük toggle ---
+  // 3) Keşifte görünürlük toggle
   async function toggleDiscoverable() {
     const next = !discoverable;
     try {
       const r = await fetch(`${API_URL}/users/me/discoverable`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS() },
+        credentials: 'include', // <-- ÖNEMLİ
         body: JSON.stringify({ value: next }),
       });
       if (!r.ok) {
@@ -94,34 +124,44 @@ export default function DiscoverPage() {
         throw new Error();
       }
       setDiscoverable(next);
-      try { localStorage.setItem(LS_DISCOVER, String(next)); } catch {}
+      try {
+        localStorage.setItem(LS_DISCOVER, String(next));
+      } catch {}
     } catch {
       alert('Keşifte görünürlük güncellenemedi.');
     }
   }
 
-  // --- Listeyi yükle ---
+  // 4) Listeyi yükle
   const load = React.useCallback(async () => {
     setLoading(true);
+    setAuthError(null);
     try {
       const qs = new URLSearchParams();
-      // lat/lng yoksa göndermiyoruz; backend me.lat/lng ile fallback yapabilir
       if (lat != null && lng != null) {
         qs.set('lat', String(lat));
         qs.set('lng', String(lng));
       }
       qs.set('radiusKm', String(radius));
+      if (whenISO) qs.set('for', whenISO);
+      if (dowQ) qs.set('dow', dowQ);
+      if (atQ) qs.set('at', atQ);
+      if (posQ) qs.set('pos', posQ);
 
       const r = await fetch(`${API_URL}${DISCOVER_ENDPOINT}?${qs.toString()}`, {
-        headers: { ...authHeader() },
+        headers: { ...AUTH_HEADERS() },
+        credentials: 'include', // <-- ÖNEMLİ
         cache: 'no-store',
       });
+
       if (!r.ok) {
         const t = await r.text().catch(() => '');
         console.error('discover fetch error', r.status, t);
+        if (r.status === 401) setAuthError('Giriş yapman gerekiyor.');
         setItems([]);
         return;
       }
+
       const data = await r.json().catch(() => ({}));
       setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (e) {
@@ -130,27 +170,30 @@ export default function DiscoverPage() {
     } finally {
       setLoading(false);
     }
-  }, [lat, lng, radius]);
+  }, [lat, lng, radius, whenISO, dowQ, atQ, posQ]);
 
   React.useEffect(() => {
     load();
   }, [load]);
 
-  // --- Maça davet ---
+  // 5) Maça davet
   async function inviteToMatch(userId: string) {
     const matchId =
-      presetMatchId ?? window.prompt("Hangi maçın id’sine davet edeceksin? (Match detail üstündeki ID)");
+      presetMatchId ??
+      window.prompt('Hangi maçın id’sine davet edeceksin? (Match detail üstündeki ID)');
     if (!matchId) return;
 
     const note = window.prompt('Not (opsiyonel)');
     try {
       const r = await fetch(`${API_URL}/matches/${matchId}/invites`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS() },
+        credentials: 'include', // <-- ÖNEMLİ
         body: JSON.stringify({ toUserId: userId, message: note || undefined }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok || !data?.ok) throw new Error(data?.message || 'Davet gönderilemedi');
+      if (!r.ok || (!data?.ok && !data?.created))
+        throw new Error(data?.message || 'Davet gönderilemedi');
       alert('Davet gönderildi');
     } catch (e: any) {
       alert(e?.message || 'Davet gönderilemedi');
@@ -207,6 +250,13 @@ export default function DiscoverPage() {
           </button>
         </div>
       </div>
+
+      {/* Uyarı */}
+      {authError && (
+        <div className="rounded-md bg-amber-600/20 px-3 py-2 text-sm text-amber-200 ring-1 ring-amber-600/30">
+          {authError} — lütfen tekrar giriş yap.
+        </div>
+      )}
 
       {/* Liste */}
       {loading ? (

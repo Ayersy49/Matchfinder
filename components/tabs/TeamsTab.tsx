@@ -1,8 +1,15 @@
 "use client";
 import React from "react";
 import Link from "next/link";
-import { Users, Shirt, LineChart, MapPin } from "lucide-react";
+import { Users, Shirt, LineChart, MapPin, Gauge } from "lucide-react";
 import { getMyTeams } from "@/lib/api";
+
+type MemberRow = {
+  userId: string;
+  role: "OWNER" | "ADMIN" | "PLAYER";
+  number?: number | null;
+  preferredPosition?: string | null;
+};
 
 type TeamRow = {
   id: string;
@@ -13,14 +20,14 @@ type TeamRow = {
   logoUrl?: string | null;
   elo?: number | null;
   avgSportsmanship?: number | null;
-  members?: Array<any> | null;
-  memberCount?: number | null;
+  avgLevel?: number | null;           // <- backend’de var
+  members?: MemberRow[] | null;       // <- şekli net
+  memberCount?: number | null;        // opsiyonel
 };
 
 function EmptyState() {
   return (
     <div className="grid place-items-center rounded-2xl border border-white/10 bg-neutral-900/60 p-8 text-center">
-      {/* İkon rozet (emoji yok) */}
       <div className="mb-3">
         <div className="relative h-16 w-16">
           <div className="absolute inset-0 rounded-2xl bg-neutral-950 ring-1 ring-white/10" />
@@ -48,10 +55,26 @@ function EmptyState() {
   );
 }
 
+// JWT payload’dan kullanıcı id’sini çekmek için ufak yardımcı.
+function getMeId(): string | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(atob(parts[1]));
+    return payload?.sub || payload?.id || payload?.userId || null;
+  } catch {
+    return null;
+  }
+}
+
 export default function TeamsTab() {
   const [items, setItems] = React.useState<TeamRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState<string | null>(null);
+  const meId = React.useMemo(() => getMeId(), []);
 
   async function refresh() {
     setLoading(true);
@@ -113,6 +136,11 @@ export default function TeamsTab() {
               ? t.members.length
               : undefined;
 
+          const myRole =
+            meId && Array.isArray(t.members)
+              ? t.members.find((m) => m.userId === meId)?.role
+              : undefined;
+
           return (
             <div key={t.id} className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
               <div className="flex items-center gap-3">
@@ -135,7 +163,13 @@ export default function TeamsTab() {
                         {t.formationCode}
                       </span>
                     )}
+                    {myRole && (
+                      <span className="rounded bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-300">
+                        {myRole === "OWNER" ? "Kaptan" : myRole === "ADMIN" ? "As Kaptan" : "Oyuncu"}
+                      </span>
+                    )}
                   </div>
+
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-400">
                     {(t.city || t.district) && (
                       <span className="inline-flex items-center gap-1">
@@ -147,6 +181,12 @@ export default function TeamsTab() {
                       <span className="inline-flex items-center gap-1">
                         <LineChart className="size-3" />
                         Elo {t.elo}
+                      </span>
+                    )}
+                    {typeof t.avgLevel === "number" && (
+                      <span className="inline-flex items-center gap-1">
+                        <Gauge className="size-3" />
+                        Seviye {t.avgLevel.toFixed(1)}
                       </span>
                     )}
                     {typeof t.avgSportsmanship === "number" && (

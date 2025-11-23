@@ -1,26 +1,25 @@
 // app/match/[id]/MatchProposalsSection.tsx
-
 "use client";
 
 import React from "react";
 import { format, parseISO } from "date-fns";
 import { tr } from "date-fns/locale";
-import { Clock, ThumbsUp, ThumbsDown, Trash2, Plus } from "lucide-react";
+import { Clock, ThumbsUp, ThumbsDown, Plus, CheckCircle } from "lucide-react";
 import {
-  getMatchProposals,
-  createMatchProposal,
-  voteMatchProposal,
-  deleteMatchProposal,
-  MatchProposal,
+  getTimeProposals,
+  proposeTime,
+  voteTimeProposal,
+  applyTimeProposal,
+  TimeProposalItem,
+  TimeProposalVote,
 } from "@/lib/api";
 
 interface Props {
   matchId: string;
-  currentUserId: string;
 }
 
-export default function MatchProposalsSection({ matchId, currentUserId }: Props) {
-  const [proposals, setProposals] = React.useState<MatchProposal[]>([]);
+export default function MatchProposalsSection({ matchId }: Props) {
+  const [items, setItems] = React.useState<TimeProposalItem[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -29,88 +28,89 @@ export default function MatchProposalsSection({ matchId, currentUserId }: Props)
   const [selectedTime, setSelectedTime] = React.useState("");
   const [creating, setCreating] = React.useState(false);
 
-  // Önerileri yükle
-  async function fetchProposals() {
+  async function load() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getMatchProposals(matchId);
-      setProposals(data);
-    } catch (err: any) {
-      setError(err?.message || "Öneriler yüklenemedi");
+      const list = await getTimeProposals(matchId);
+      setItems(Array.isArray(list) ? list : []);
+    } catch (e: any) {
+      setError(e?.message || "Öneriler yüklenemedi");
     } finally {
       setLoading(false);
     }
   }
 
   React.useEffect(() => {
-    fetchProposals();
+    load();
   }, [matchId]);
 
-  // Yeni öneri oluştur
-  async function handleCreateProposal(e: React.FormEvent) {
+  // Yeni saat & tarih öner
+  async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedDate || !selectedTime) return;
-
     setCreating(true);
     try {
-      const proposedDate = new Date(`${selectedDate}T${selectedTime}`).toISOString();
-      await createMatchProposal(matchId, proposedDate);
-      await fetchProposals(); // Listeyi yenile
+      const iso = new Date(`${selectedDate}T${selectedTime}`).toISOString();
+      await proposeTime(matchId, iso);
       setShowCreateForm(false);
       setSelectedDate("");
       setSelectedTime("");
-    } catch (err: any) {
-      alert(err?.message || "Öneri oluşturulamadı");
+      await load();
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      alert(
+        msg.includes("duplicate_time")
+          ? "Aynı tarih/saat zaten önerildi."
+          : msg || "Öneri oluşturulamadı"
+      );
     } finally {
       setCreating(false);
     }
   }
 
-  // Oy ver
-  async function handleVote(proposalId: string, voteType: "ACCEPT" | "REJECT") {
+  // Oy ver (UP/DOWN). Admin için UP taraf onayıdır; iki taraf onaylıysa BE otomatik uygulayabilir.
+  async function onVote(pid: string, value: TimeProposalVote) {
+    // optimistic
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== pid) return it;
+        let up = it.votesUp;
+        let down = it.votesDown;
+        if (it.myVote === "UP") up--;
+        if (it.myVote === "DOWN") down--;
+        if (value === "UP") up++;
+        else down++;
+        return { ...it, myVote: value, votesUp: up, votesDown: down };
+      })
+    );
     try {
-      // Optimistic update
-      setProposals((prev) =>
-        prev.map((p) => {
-          if (p.id !== proposalId) return p;
-
-          const prevVote = p.userVote;
-          let acceptCount = p.acceptCount;
-          let rejectCount = p.rejectCount;
-
-          if (prevVote === "ACCEPT") acceptCount--;
-          if (prevVote === "REJECT") rejectCount--;
-          if (voteType === "ACCEPT") acceptCount++;
-          if (voteType === "REJECT") rejectCount++;
-
-          return { ...p, userVote: voteType, acceptCount, rejectCount };
-        })
-      );
-
-      await voteMatchProposal(matchId, proposalId, voteType);
-    } catch (err: any) {
-      alert(err?.message || "Oy verilemedi");
-      fetchProposals(); // Hata durumunda geri al
+      const r = await voteTimeProposal(matchId, pid, value);
+      if (r?.applied) {
+        // BE maçı güncellediyse listede statü değişmiş olabilir
+        await load();
+      }
+    } catch (e: any) {
+      alert(e?.message || "Oy verilemedi");
+      load(); // geri al
     }
   }
 
-  // Öneri sil
-  async function handleDelete(proposalId: string) {
-    if (!confirm("Bu öneriyi silmek istediğinizden emin misiniz?")) return;
+  // İki taraf da onayladıysa manuel uygula (owner veya takım admini)
+  async function onApply(pid: string) {
     try {
-      await deleteMatchProposal(matchId, proposalId);
-      setProposals((prev) => prev.filter((p) => p.id !== proposalId));
-    } catch (err: any) {
-      alert(err?.message || "Öneri silinemedi");
+      const r = await applyTimeProposal(matchId, pid);
+      if (r?.ok) {
+        alert("Tarih & saat uygulandı.");
+        await load();
+      }
+    } catch (e: any) {
+      alert(e?.message || "Uygulanamadı");
     }
   }
 
-  // Telefon maskele
-  const maskPhone = (phone: string) => {
-    if (phone.length < 10) return phone;
-    return `${phone.substring(0, 3)} *** **`;
-  };
+  const maskPhone = (p: string) =>
+    !p || p.length < 10 ? p : `${p.slice(0, 3)} *** **`;
 
   return (
     <div className="space-y-4 rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
@@ -121,7 +121,7 @@ export default function MatchProposalsSection({ matchId, currentUserId }: Props)
           <h3 className="text-lg font-semibold">Saat & Tarih Önerileri</h3>
         </div>
         <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
+          onClick={() => setShowCreateForm((s) => !s)}
           className="flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
         >
           <Plus className="h-4 w-4" />
@@ -132,7 +132,7 @@ export default function MatchProposalsSection({ matchId, currentUserId }: Props)
       {/* Create Form */}
       {showCreateForm && (
         <form
-          onSubmit={handleCreateProposal}
+          onSubmit={onCreate}
           className="space-y-3 rounded-xl border border-white/10 bg-neutral-800/60 p-4"
         >
           <h4 className="text-sm font-medium">Yeni Tarih & Saat Öner</h4>
@@ -165,7 +165,7 @@ export default function MatchProposalsSection({ matchId, currentUserId }: Props)
               disabled={creating}
               className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
             >
-              {creating ? "Oluşturuluyor..." : "Öner"}
+              {creating ? "Oluşturuluyor…" : "Öner"}
             </button>
             <button
               type="button"
@@ -186,25 +186,29 @@ export default function MatchProposalsSection({ matchId, currentUserId }: Props)
       )}
 
       {/* Loading */}
-      {loading && <div className="text-center text-sm text-neutral-400 py-4">Yükleniyor…</div>}
+      {loading && (
+        <div className="py-4 text-center text-sm text-neutral-400">Yükleniyor…</div>
+      )}
 
-      {/* Empty State */}
-      {!loading && proposals.length === 0 && (
-        <div className="text-center text-sm text-neutral-400 py-8">
+      {/* Empty */}
+      {!loading && items.length === 0 && (
+        <div className="py-8 text-center text-sm text-neutral-400">
           Henüz öneri yok. İlk öneriyi siz oluşturun!
         </div>
       )}
 
-      {/* Proposals List */}
-      {!loading && proposals.length > 0 && (
+      {/* List */}
+      {!loading && items.length > 0 && (
         <div className="space-y-3">
-          {proposals.map((proposal) => {
-            const proposedDate = parseISO(proposal.proposedDate);
-            const isOwner = proposal.proposedBy === currentUserId;
+          {items.map((it) => {
+            const dt = it.time ? parseISO(it.time) : null;
+            const dateText = it.time
+              ? format(dt!, "dd MMMM yyyy - HH:mm", { locale: tr })
+              : "—";
 
             return (
               <div
-                key={proposal.id}
+                key={it.id}
                 className="rounded-xl border border-white/10 bg-neutral-800/60 p-4"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -212,66 +216,84 @@ export default function MatchProposalsSection({ matchId, currentUserId }: Props)
                     {/* Proposer */}
                     <div className="mb-2 flex items-center gap-2">
                       <div className="grid h-6 w-6 place-items-center rounded-full bg-emerald-600 text-xs font-bold text-neutral-950">
-                        {proposal.proposer.phone.charAt(0)}
+                        {(it.by || "?").toString().slice(0, 1).toUpperCase()}
                       </div>
                       <span className="text-sm text-neutral-300">
-                        {maskPhone(proposal.proposer.phone)}
+                        {/* BE'de proposer phone dönmüyor; sadece süs için userId kısalt */}
+                        {maskPhone(it.by)}
                       </span>
                     </div>
 
-                    {/* Date & Time */}
-                    <div className="mb-3 text-lg font-semibold text-emerald-400">
-                      {format(proposedDate, "dd MMMM yyyy - HH:mm", { locale: tr })}
+                    {/* Date */}
+                    <div className="mb-2 text-lg font-semibold text-emerald-400">
+                      {dateText}
                     </div>
 
-                    {/* Vote Stats */}
-                    <div className="flex items-center gap-4 text-sm">
-                      <div className="flex items-center gap-1 text-emerald-400">
+                    {/* Status row */}
+                    <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-neutral-300">
+                      <span className="inline-flex items-center gap-1">
                         <ThumbsUp className="h-4 w-4" />
-                        <span>{proposal.acceptCount}</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-rose-400">
+                        {it.votesUp}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-rose-400">
                         <ThumbsDown className="h-4 w-4" />
-                        <span>{proposal.rejectCount}</span>
-                      </div>
+                        {it.votesDown}
+                      </span>
+
+                      <span className="mx-1 h-4 w-px bg-white/10" />
+
+                      <span
+                        className={`rounded-md px-2 py-0.5 ${
+                          it.approvedA ? "bg-emerald-500/20 text-emerald-300" : "bg-white/10 text-neutral-300"
+                        }`}
+                        title="Takım A kaptan onayı"
+                      >
+                        A onay {it.approvedA ? "✓" : "–"}
+                      </span>
+                      <span
+                        className={`rounded-md px-2 py-0.5 ${
+                          it.approvedB ? "bg-emerald-500/20 text-emerald-300" : "bg-white/10 text-neutral-300"
+                        }`}
+                        title="Takım B kaptan onayı"
+                      >
+                        B onay {it.approvedB ? "✓" : "–"}
+                      </span>
                     </div>
                   </div>
 
                   {/* Actions */}
-                  <div className="flex gap-2">
-                    {!isOwner && (
-                      <>
-                        <button
-                          onClick={() => handleVote(proposal.id, "ACCEPT")}
-                          className={`rounded-lg p-2 transition ${
-                            proposal.userVote === "ACCEPT"
-                              ? "bg-emerald-600 text-white"
-                              : "bg-neutral-700 hover:bg-neutral-600"
-                          }`}
-                          title="Kabul et"
-                        >
-                          <ThumbsUp className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleVote(proposal.id, "REJECT")}
-                          className={`rounded-lg p-2 transition ${
-                            proposal.userVote === "REJECT"
-                              ? "bg-rose-600 text-white"
-                              : "bg-neutral-700 hover:bg-neutral-600"
-                          }`}
-                          title="Reddet"
-                        >
-                          <ThumbsDown className="h-4 w-4" />
-                        </button>
-                      </>
-                    )}
-                    {isOwner && (
+                  <div className="flex flex-col items-stretch gap-2 sm:flex-row">
+                    <button
+                      onClick={() => onVote(it.id, "UP")}
+                      className={`rounded-lg p-2 transition ${
+                        it.myVote === "UP"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-neutral-700 hover:bg-neutral-600"
+                      }`}
+                      title="Kabul"
+                    >
+                      <ThumbsUp className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => onVote(it.id, "DOWN")}
+                      className={`rounded-lg p-2 transition ${
+                        it.myVote === "DOWN"
+                          ? "bg-rose-600 text-white"
+                          : "bg-neutral-700 hover:bg-neutral-600"
+                      }`}
+                      title="Reddet"
+                    >
+                      <ThumbsDown className="h-4 w-4" />
+                    </button>
+
+                    {it.canFinalize && (
                       <button
-                        onClick={() => handleDelete(proposal.id)}
-                        className="rounded-lg bg-rose-600 p-2 hover:bg-rose-700"
-                        title="Sil"
+                        onClick={() => onApply(it.id)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
+                        title="Uygula (maç saatini buna çek)"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <CheckCircle className="h-4 w-4" />
+                        Uygula
                       </button>
                     )}
                   </div>

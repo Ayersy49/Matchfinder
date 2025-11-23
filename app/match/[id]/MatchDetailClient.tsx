@@ -2,7 +2,6 @@
 'use client';
 
 import * as React from 'react';
-import MatchProposalsSection from "./MatchProposalsSection";
 import Link from 'next/link';
 import { authHeader, clearToken, myId } from '@/lib/auth';
 import InviteFriendsClient from './InviteFriendsClient';
@@ -42,13 +41,19 @@ type Slot = {
 
 type TimeProposal = {
   id: string;
-  by: string; // userId
+  by: string;               // userId
   time: string | null;
   createdAt: string;
   votesUp: number;
   votesDown: number;
   myVote: 'UP' | 'DOWN' | null;
+
+  // takım maçı için ek alanlar (BE dönüyorsa kullanılır; yoksa false/null gelir)
+  ackA?: boolean;           // Takım A kaptan onayı
+  ackB?: boolean;           // Takım B kaptan onayı
+  appliedAt?: string | null;// iki onay sonrası BE set edebilir
 };
+
 
 type MatchDetail = {
   id: string;
@@ -159,12 +164,17 @@ function InviteMini({ matchId, onOpenInvite }: { matchId: string; onOpenInvite: 
 function TimeProposalsPanel({
   matchId,
   isOwner,
+  myTeam,
+  canCaptainApply,
   onApplied,
 }: {
   matchId: string;
   isOwner: boolean;
-  onApplied?: () => void; // maça saat uygulandığında üst komponent refresh etsin
+  myTeam: Team | null;          // A/B hangisindeyim (slotumdan)
+  canCaptainApply: boolean;     // takım kaptanı mıyım? (owner değil)
+  onApplied?: () => void;
 }) {
+
   const me = myId();
   const [items, setItems] = React.useState<TimeProposal[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -199,7 +209,16 @@ function TimeProposalsPanel({
         votesUp: Number(p.votesUp ?? 0),
         votesDown: Number(p.votesDown ?? 0),
         myVote: p.myVote ?? null,
+        // BE hangi isimle gönderirse göndersin yakalayalım
+        ackA: Boolean(
+          p.ackA ?? p.okA ?? p.approvedA ?? p.teamAApproved ?? p?.ack?.A ?? false
+        ),
+        ackB: Boolean(
+          p.ackB ?? p.okB ?? p.approvedB ?? p.teamBApproved ?? p?.ack?.B ?? false
+        ),
+        appliedAt: p.appliedAt ?? null,
       }));
+
       setItems(mapped);
     } catch (e: any) {
       setError(e?.message || 'Öneriler yüklenemedi');
@@ -270,6 +289,50 @@ function TimeProposalsPanel({
     }
   }
 
+  async function ackCaptain(id: string) {
+    if (!canCaptainApply || !myTeam) return;
+    try {
+      setActing(id);
+
+      // ✅ OPTİMİSTİK: kendi takımımın rozetini anında yeşile çek
+      setItems(prev =>
+        prev.map(p =>
+          p.id !== id
+            ? p
+            : myTeam === 'A'
+            ? { ...p, ackA: true }
+            : { ...p, ackB: true }
+        ),
+      );
+
+      // ✅ BE ile uyumlu tek endpoint: /approve
+      const r = await fetch(
+        `${API_URL}/matches/${matchId}/time-proposals/${id}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
+          body: JSON.stringify({ team: myTeam, approve: true }),
+        },
+      );
+
+      // (BE’de endpoint /ack ise, yukarıdaki URL’i /ack yapabilirsiniz.
+      //  Ama tek isimde standardize etmek en temizi.)
+
+      if (handle401(r.status)) return;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || `HTTP ${r.status}`);
+
+      onApplied?.();
+      await load(); // gerçek durumu tazele (diğer takım da onayladıysa saat uygulanmış gelir)
+    } catch (e: any) {
+      alert(e?.message || 'Onay gönderilemedi');
+      // optimistik değişiklikleri geri almak için fresh state çek
+      await load();
+    } finally {
+      setActing(null);
+    }
+  }
+  
   return (
     <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
       <div className="mb-2 flex items-center justify-between">
@@ -309,16 +372,30 @@ function TimeProposalsPanel({
                     <span>•</span>
                     <span>{fmtDate(p.createdAt)}</span>
                   </div>
+                  <div className="mt-1 flex items-center gap-1 text-[11px]">
+                    <span className={`rounded px-1.5 py-0.5 ${p.ackA ? 'bg-emerald-700/70 text-emerald-100' : 'bg-neutral-800 text-neutral-300'}`}>
+                      A onay
+                    </span>
+                    <span className={`rounded px-1.5 py-0.5 ${p.ackB ? 'bg-emerald-700/70 text-emerald-100' : 'bg-neutral-800 text-neutral-300'}`}>
+                      B onay
+                    </span>
+                    {(p.ackA && p.ackB) && (
+                      <span className="ml-1 inline-flex items-center gap-1 text-emerald-400">
+                        <Check className="size-3" /> Onaylandı
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
+                  {/* oylar */}
                   <button
                     disabled={acting === p.id}
                     onClick={() => vote(p.id, 'UP')}
                     className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${
                       p.myVote === 'UP'
                         ? 'bg-emerald-600/90 text-neutral-900'
-                        : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
+                      : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
                     }`}
                     title="Evet (bu saat uygun)"
                   >
@@ -339,6 +416,7 @@ function TimeProposalsPanel({
                     {p.votesDown}
                   </button>
 
+                  {/* OWNER: zorla uygula */}
                   {isOwner && (
                     <button
                       disabled={acting === p.id}
@@ -348,6 +426,22 @@ function TimeProposalsPanel({
                     >
                       <Check className="size-3.5" />
                       Uygula
+                    </button>
+                  )}
+
+                  {/* KAPTAN: takım adına onay */}
+                  {!isOwner && canCaptainApply && myTeam && (
+                    <button
+                      disabled={
+                        acting === p.id ||
+                        (myTeam === 'A' ? p.ackA : p.ackB) // zaten kendi takımın onayladıysa disable
+                      }
+                      onClick={() => ackCaptain(p.id)}
+                      className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2 py-1 text-xs text-neutral-950 hover:bg-emerald-500 disabled:opacity-60"
+                      title="Takımım adına onayla"
+                    >
+                      <Check className="size-3.5" />
+                      Onayla
                     </button>
                   )}
                 </div>
@@ -1326,11 +1420,8 @@ export default function MatchDetailClient({ id }: { id: string }) {
           )}
 
           {/* TAKIM MAÇI — SAHİP DEĞİL ama canEdit: Saat & Tarih Öner */}
-          {m.createdFrom === 'TEAM_MATCH' && !isOwner && canEdit && (
-            <button
-              onClick={() => setSuggestOpen(true)}
-              className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
-            >
+          {m.createdFrom === 'TEAM_MATCH' && canEdit && (
+            <button onClick={() => setSuggestOpen(true)} className="rounded-xl bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
               Saat & Tarih Öner
             </button>
           )}
@@ -1732,10 +1823,15 @@ export default function MatchDetailClient({ id }: { id: string }) {
       {isOwner ? <AccessRequestsPanel matchId={m.id} /> : null}
 
       {/* Saat & Tarih Önerileri paneli (herkes görebilir, owner uygulayabilir) */}
-      {/* SADECE NORMAL MAÇTA: TimeProposalsPanel */}
-      {m.createdFrom !== 'TEAM_MATCH' && (
-        <TimeProposalsPanel matchId={m.id} isOwner={isOwner} onApplied={refresh} />
-      )}
+      {m.createdFrom === 'TEAM_MATCH' && (
+        <TimeProposalsPanel
+          matchId={m.id}
+          isOwner={isOwner}
+          myTeam={mySlot?.team ?? null}
+          canCaptainApply={!!m?.access?.canEdit && !isOwner}
+          onApplied={refresh}
+        />
+      )}  
 
       {/* İhtiyaç seçiciler */}
       <div className="flex flex-wrap items-center gap-2">
@@ -1764,15 +1860,8 @@ export default function MatchDetailClient({ id }: { id: string }) {
       </div>
 
       <RecommendedPanel matchId={m.id} needPos={focusPos} team={focusTeam} />
-
       <InviteFriendsClient open={inviteOpen} onClose={() => setInviteOpen(false)} matchId={m.id} />
       <MatchChat matchId={m.id} />
-      {/* Saat & Tarih Önerileri - SADECE TAKIM MAÇLARI */}
-      {currentUserId && m.createdFrom === 'TEAM_MATCH' && (
-        <div className="mt-6">
-          <MatchProposalsSection matchId={id} currentUserId={currentUserId} />
-        </div>
-      )}
     </div>
   );
 }

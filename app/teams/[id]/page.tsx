@@ -18,12 +18,18 @@ import {
   deleteTeamHard,
 } from "@/lib/api";
 
+import TeamInviteModal from "@/components/teams/TeamInviteModal";
+
 const POS_LABEL: Record<string, string> = {
   GK:"Kaleci", LB:"Sol Bek", RB:"Sağ Bek", CB1:"Stoper", CB2:"Stoper", CB3:"Stoper",
   DM:"Ön Libero", DM1:"Defansif Orta", DM2:"Defansif Orta", CM:"Merkez", AM:"Ofansif Ortasaha",
   LW:"Sol Kanat", RW:"Sağ Kanat", ST:"Forvet", ST1:"Forvet", ST2:"Forvet",
   LWB:"Sol Kanat Bek", RWB:"Sağ Kanat Bek",
 };
+
+// dosyanın üst kısmına (component içinde değil) ekle
+const isBenchKey = (k: string) => /^SB\d+$/i.test(k);
+
 
 const PREF_TO_CODE: Record<string, string> = {
   "Santrafor": "ST",
@@ -73,18 +79,22 @@ export default function TeamDetail() {
   const [assigning, setAssigning] = React.useState(false);
   const [selectedPos, setSelectedPos] = React.useState<string>("");
 
-  // yönetim UI
   const [editing, setEditing] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
 
+  const [inviteOpen, setInviteOpen] = React.useState(false);
+
   const teamId = React.useMemo(() => (Array.isArray(id) ? id[0] : id) as string, [id]);
+
+  async function refreshTeam() {
+    const [t, s] = await Promise.all([getTeam(teamId), getTeamSlots(teamId)]);
+    setTeam(t);
+    setSlots(s);
+  }
 
   React.useEffect(() => {
     (async () => {
-      const t = await getTeam(teamId);
-      setTeam(t);
-      const s = await getTeamSlots(teamId);
-      setSlots(s);
+      await refreshTeam();
       const chat = await getTeamChat(teamId);
       setMessages(chat);
     })();
@@ -111,10 +121,11 @@ export default function TeamDetail() {
   );
 
   const avgLevel = React.useMemo(() => {
+    if (typeof team?.avgLevel === "number") return team.avgLevel;
     const list = activeMembers.map((m: any) => Number(m.user?.level ?? 0)).filter((n: number) => n > 0);
     if (!list.length) return null;
     return Math.round((list.reduce((a: number, b: number) => a + b, 0) / list.length) * 10) / 10;
-  }, [activeMembers]);
+  }, [activeMembers, team?.avgLevel]);
 
   const openSlots = React.useMemo(() => {
     return slots.filter((s) => !s.userId).map((s) => s.slotKey);
@@ -182,10 +193,9 @@ export default function TeamDetail() {
     }
   }
 
-
   async function createOpponentReq() {
     const dt = new Date(); dt.setDate(dt.getDate() + 2); dt.setHours(21, 0, 0, 0);
-    const sizeGuess = slots.filter(s => s.formationCode === (team?.formationCode || '4-3-3')).length || 7;
+    const sizeGuess = slots.filter(s => !isBenchKey(String(s.slotKey))).length || 7;
     await postTeamRequest({
       teamId: teamId,
       date: dt.toISOString(),
@@ -197,12 +207,6 @@ export default function TeamDetail() {
     });
     alert("Rakip arama ilanı oluşturuldu.");
     router.push("/opponents");
-  }
-
-  async function refreshTeam() {
-    const [t, s] = await Promise.all([getTeam(teamId), getTeamSlots(teamId)]);
-    setTeam(t);
-    setSlots(s);
   }
 
   async function handleCloseTeam() {
@@ -255,9 +259,18 @@ export default function TeamDetail() {
           </button>
 
           {isAdmin && (
-            <button onClick={() => setEditing(v => !v)} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
-              {editing ? "Düzenlemeyi Kapat" : "Düzenle"}
-            </button>
+            <>
+              <button
+                onClick={() => setInviteOpen(true)}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 hover:bg-emerald-500"
+              >
+                Oyuncu davet et
+              </button>
+
+              <button onClick={() => setEditing(v => !v)} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
+                {editing ? "Düzenlemeyi Kapat" : "Düzenle"}
+              </button>
+            </>
           )}
 
           {isOwner && (
@@ -277,6 +290,16 @@ export default function TeamDetail() {
           ) : null}
         </div>
       </div>
+
+      {/* Davet Modal */}
+      <TeamInviteModal
+        teamId={teamId}
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        onSent={async () => {
+          await refreshTeam();
+        }}
+      />
 
       {/* İstatistikler */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-300">
@@ -338,7 +361,9 @@ export default function TeamDetail() {
               <option value="3-5-2">3-5-2</option>
               <option value="4-2-3-1">4-2-3-1</option>
             </select>
-            <select name="size" defaultValue={String(slots.filter(s => s.formationCode === (team?.formationCode || '4-3-3')).length || 7)}
+            <select
+              name="size"
+              defaultValue={String(slots.filter(s => !isBenchKey(String(s.slotKey))).length || 7)}
                     className="rounded-lg bg-neutral-800 px-3 py-2">
               {[5,6,7,8,9,10,11].map(n=>(
                 <option key={n} value={n}>{n}v{n}</option>
@@ -368,7 +393,7 @@ export default function TeamDetail() {
         </div>
       )}
 
-      {/* Ortalanmış saha + sağda yerleşme paneli */}
+      {/* Saha + yerleşme paneli */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Saha */}
         <div className="grid place-items-center">
@@ -377,25 +402,37 @@ export default function TeamDetail() {
               const key = s.slotKey as string;
               const left = s.x as number;
               const top  = s.y as number;
+
               const occupied = Boolean(s.userId);
               const mine = occupied && me?.id && s.userId === me.id;
+              const bench = isBenchKey(key);              // <<< YENİ
 
               const member = occupied ? team.members.find((m:any) => m.userId === s.userId) : null;
               const label = mine ? "Ben" : occupied ? "U" + ((member?.user?.phone?.slice(-3)) ?? "***") : key;
+
+              // ortak buton stilleri
+              const baseBtn =
+                "absolute -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-xs ring-1";
+
+              // BENCH'i her durumda gri yap (mine olsa da)
+              const stateClass = bench
+                ? "bg-neutral-600/60 text-neutral-200 ring-white/10"       // <<< YENİ (gri, düşük kontrast)
+                : mine
+                  ? "bg-emerald-600 text-neutral-950 ring-emerald-400"     // saha içindeki kendi slotun
+                  : occupied
+                    ? "bg-neutral-700 text-white ring-white/20"            // dolu slot
+                    : "bg-black/70 text-white hover:bg-black/80 ring-white/30"; // boş slot
 
               return (
                 <button
                   key={key}
                   onClick={() => !occupied && placeSelf(key)}
-                  title={occupied ? `${POS_LABEL[key] || key} • Dolu` : `Slota yerleş: ${POS_LABEL[key] || key}`}
-                  className={[
-                    "absolute -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-xs ring-1",
-                    mine
-                      ? "bg-emerald-600 text-neutral-950 ring-emerald-400"
-                      : occupied
-                      ? "bg-neutral-700 text-white ring-white/20"
-                      : "bg-black/70 text-white hover:bg-black/80 ring-white/30",
-                  ].join(" ")}
+                  title={
+                    occupied
+                      ? `${POS_LABEL[key] || key} • Dolu`
+                      : `Slota yerleş: ${POS_LABEL[key] || key}`
+                  }
+                  className={`${baseBtn} ${stateClass} ${bench ? "opacity-90" : ""}`} // <<< YENİ
                   style={{ left: `${left}%`, top: `${top}%` }}
                   disabled={occupied && !mine}
                 >
@@ -463,8 +500,19 @@ export default function TeamDetail() {
             <div className="mb-2 text-sm font-medium">Üyeler</div>
             <div className="flex flex-wrap gap-2">
               {(team.members ?? []).map((m: any) => (
-                <span key={m.userId} className="rounded-lg bg-neutral-800 px-2 py-1 text-xs">
-                  U{m.user.phone?.slice(-3) ?? "***"} · {m.role}
+                <span
+                  key={m.userId}
+                  className={[
+                    "rounded-lg px-2 py-1 text-xs",
+                    m.role === "OWNER"
+                      ? "bg-emerald-700/40 text-emerald-200 ring-1 ring-emerald-500/30"
+                      : m.role === "ADMIN"
+                      ? "bg-sky-700/40 text-sky-200 ring-1 ring-sky-500/30"
+                      : "bg-neutral-800 text-neutral-200"
+                  ].join(" ")}
+                  title={m.role}
+                >
+                  U{m.user?.phone?.slice(-3) ?? "***"} · {m.role}
                 </span>
               ))}
             </div>
