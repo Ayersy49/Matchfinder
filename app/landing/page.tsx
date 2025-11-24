@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import SeriesTab from "@/components/tabs/SeriesTab";
 import FooterTabs from "@/components/FooterTabs";
 import TeamsTab from "@/components/tabs/TeamsTab";
+import LoginScreen from "@/components/auth/LoginScreen";
 
 
 
@@ -746,8 +747,8 @@ export default function Page() {
 }
 
 /* ---------------------- Login ---------------------- */
-
-function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+// Eski LoginScreen devre dışı - artık @/components/auth/LoginScreen kullanılıyor
+function _OldLoginScreen_DISABLED({ onSuccess }: { onSuccess: () => void }) {
   const STADIUMS = [
     "https://images.unsplash.com/photo-1530541930197-ff16ac917b0e?q=80&w=1600&auto=format&fit=crop",
     "https://images.unsplash.com/photo-1486286701208-1d58e9338013?q=80&w=1600&auto=format&fit=crop",
@@ -2292,6 +2293,17 @@ function AccountScreen() {
               className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
               placeholder="kullaniciadi"
             />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Telefon Numarası</label>
+            <input
+              type="tel"
+              value={me?.phone ? me.phone.replace(/(\d{3})(\d{3})(\d{2})(\d{2})/, "$1 $2 $3 $4") : ""}
+              readOnly
+              className="w-full rounded-xl bg-neutral-700 px-4 py-2 outline-none ring-1 ring-white/10 text-neutral-400 cursor-not-allowed"
+              placeholder="5xx xxx xx xx"
+            />
+            <p className="text-xs text-neutral-500 mt-1">Telefon numarası değiştirilemez</p>
           </div>
           <div className="flex gap-2">
             <div className="flex-1">
