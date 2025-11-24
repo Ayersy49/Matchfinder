@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, Repeat, ListCheck, Layers, Trophy, UserRound, Shield, LogIn, Footprints, Star as IconStar } from "lucide-react";
+import { CalendarDays, Repeat, ListCheck, Layers, Trophy, UserRound, Shield, UserCog, LogIn, Footprints, Star as IconStar } from "lucide-react";
 import { useMe } from "@/lib/useMe";
 import Link from "next/link";
 import { authHeader, clearToken, getToken, setToken } from "@/lib/auth";
@@ -361,9 +361,8 @@ function RateMatchModal({
 
                 {/* Traitler */}
                 <div
-                  className={`traits mt-2 flex flex-wrap items-center gap-x-8 gap-y-2 text-xs ${
-                    disabled ? "pointer-events-none opacity-50" : ""
-                  }`}
+                  className={`traits mt-2 flex flex-wrap items-center gap-x-8 gap-y-2 text-xs ${disabled ? "pointer-events-none opacity-50" : ""
+                    }`}
                 >
                   {(
                     ["punctuality", "respect", "sportsmanship", "swearing", "aggression"] as const
@@ -382,7 +381,7 @@ function RateMatchModal({
                               cp[idx] = { ...cp[idx], traits: { ...cp[idx].traits, [k]: n } };
                               return cp;
                             })
-                            
+
                           }
                         />
                       </div>
@@ -461,7 +460,7 @@ function PendingRatingsBell() {
       });
       const j = await r.json().catch(() => ({}));
       setItems(Array.isArray(j?.items) ? j.items : []);
-    } catch {}
+    } catch { }
   }, [API_URL]);
 
   React.useEffect(() => {
@@ -479,11 +478,10 @@ function PendingRatingsBell() {
             setOpen(true);
           }
         }}
-        className={`rounded-lg px-3 py-1.5 text-sm ${
-          items.length
-            ? "bg-amber-600/90 hover:bg-amber-600"
-            : "bg-neutral-800 text-neutral-300"
-        }`}
+        className={`rounded-lg px-3 py-1.5 text-sm ${items.length
+          ? "bg-amber-600/90 hover:bg-amber-600"
+          : "bg-neutral-800 text-neutral-300"
+          }`}
         title="Değerlendirme bekliyor"
       >
         Değerlendir ({items.length})
@@ -514,7 +512,7 @@ function NotificationsBell() {
       // { items:[...] } ya da { count: n } destekler
       const c = Array.isArray(j?.items) ? j.items.length : (Number(j?.count) || 0);
       setCount(c);
-    } catch {}
+    } catch { }
   }, []);
 
   React.useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
@@ -548,7 +546,7 @@ function InvitesBell() {
       const data = await r.json().catch(() => ({}));
       const n = Array.isArray(data?.items) ? data.items.length : 0;
       setCount(n);
-    } catch {}
+    } catch { }
   }, []);
 
   React.useEffect(() => {
@@ -587,7 +585,7 @@ function FriendsBell() {
       const data = await r.json().catch(() => ({}));
       const n = Array.isArray(data?.items) ? data.items.length : 0;
       setCount(n);
-    } catch {}
+    } catch { }
   }, []);
 
   React.useEffect(() => {
@@ -721,14 +719,14 @@ export default function Page() {
     }
   }, []);
 
-  const [activeTab, setActiveTab] = useState<"matches" | "series" | "teams" | "profile" | "player">("matches");
+  const [activeTab, setActiveTab] = useState<"matches" | "series" | "teams" | "profile" | "player" | "account">("matches");
 
 
-  // URL'den ?tab=... oku ve state'i senkronla (matches|profile|player)
+  // URL'den ?tab=... oku ve state'i senkronla (matches|profile|player|account)
   const sp = useSearchParams();
   useEffect(() => {
     const t = sp.get("tab");
-    if (t === "matches" || t === "series" || t === "teams" || t === "profile" || t === "player") {
+    if (t === "matches" || t === "series" || t === "teams" || t === "profile" || t === "player" || t === "account") {
       setActiveTab(t as any);
     } else {
       setActiveTab("matches");
@@ -808,8 +806,8 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
           data?.reason === "OTP_expired"
             ? "Kodun süresi doldu"
             : data?.reason === "OTP_mismatch"
-            ? "Kod hatalı"
-            : "Giriş başarısız";
+              ? "Kod hatalı"
+              : "Giriş başarısız";
         alert(msg);
         return;
       }
@@ -830,9 +828,8 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
             key={i}
             src={src}
             alt="stadium"
-            className={`absolute inset-0 size-full object-cover transition-opacity duration-1000 ${
-              i === idx ? "opacity-100" : "opacity-0"
-            }`}
+            className={`absolute inset-0 size-full object-cover transition-opacity duration-1000 ${i === idx ? "opacity-100" : "opacity-0"
+              }`}
           />
         ))}
         <div className="absolute inset-0 bg-black/70" />
@@ -903,11 +900,11 @@ function MainShell({
   activeTab,
   onTab,
 }: {
-  activeTab: "matches" | "series" | "teams" | "profile" | "player";
+  activeTab: "matches" | "series" | "teams" | "profile" | "player" | "account";
   onTab: (t: any) => void;
 }) {
   const router = useRouter();
-  const onTabNav = (t: 'matches'|'series'|'teams'|'profile'|'player') => {
+  const onTabNav = (t: 'matches' | 'series' | 'teams' | 'profile' | 'player' | 'account') => {
     onTab(t);
     router.replace(`/landing?tab=${t}`);
   };
@@ -925,15 +922,16 @@ function MainShell({
       </header>
 
       <main className="px-4 py-4">
-        {activeTab === "matches" && <MatchesScreen />}
-        {activeTab === "series"  && <SeriesTab />}
-        {activeTab === "teams"   && <TeamsTab />}
+        {activeTab === "matches" && <MatchesScreen activeTab={activeTab} />}
+        {activeTab === "series" && <SeriesTab />}
+        {activeTab === "teams" && <TeamsTab />}
         {activeTab === "profile" && <ProfileScreen />}
         {activeTab === "player" && <PlayerProfile />}
+        {activeTab === "account" && <AccountScreen />}
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-neutral-950/80 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
-        <div className="mx-auto flex max-w-md items-stretch justify-around py-2">
+        <div className="mx-auto flex max-w-2xl items-stretch justify-around py-2">
           <TabButton
             icon={<CalendarDays className="size-5" />}
             label="Maçlar"
@@ -959,10 +957,16 @@ function MainShell({
             onClick={() => onTabNav('player')}
           />
           <TabButton
-            icon={<Layers className="size-5" />}   
+            icon={<Layers className="size-5" />}
             label="Takımlar"
             active={activeTab === "teams"}
             onClick={() => onTabNav('teams')}
+          />
+          <TabButton
+            icon={<UserCog className="size-5" />}
+            label="Hesap"
+            active={activeTab === "account"}
+            onClick={() => onTabNav('account')}
           />
         </div>
       </nav>
@@ -974,9 +978,8 @@ function TabButton({ icon, label, active, onClick }: any) {
   return (
     <button
       onClick={onClick}
-      className={`flex min-w-[110px] flex-col items-center justify-center rounded-xl px-3 py-2 ${
-        active ? "text-emerald-400" : "text-neutral-300 hover:text-white"
-      }`}
+      className={`flex min-w-[110px] flex-col items-center justify-center rounded-xl px-3 py-2 ${active ? "text-emerald-400" : "text-neutral-300 hover:text-white"
+        }`}
     >
       {icon}
       <span className="mt-1 text-xs">{label}</span>
@@ -1018,7 +1021,7 @@ function StatPill({ children }: { children: React.ReactNode }) {
 
 
 /* ------------------ Maçlar ekranı ------------------ */
-function MatchesScreen() {
+function MatchesScreen({ activeTab }: { activeTab: string }) {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
   const { me } = useMe();
   const meId = me?.id ?? null;
@@ -1067,8 +1070,8 @@ function MatchesScreen() {
     const list = Array.isArray((me as any)?.topPositions)
       ? (me as any).topPositions
       : Array.isArray(me?.positions)
-      ? me!.positions
-      : [];
+        ? me!.positions
+        : [];
     return list.slice(0, 3);
   }, [me]);
 
@@ -1084,6 +1087,13 @@ function MatchesScreen() {
       setLoading(false);
     }
   }
+
+  // Otomatik yükleme: component mount olduğunda ve activeTab değiştiğinde
+  React.useEffect(() => {
+    if (activeTab === "matches") {
+      refresh();
+    }
+  }, [activeTab]);
 
   React.useEffect(() => {
     const needWatch = items.some(m => m.inviteOnly && !(m as any).access?.canView);
@@ -1102,7 +1112,7 @@ function MatchesScreen() {
     const s = slots.find((s) => s.userId === meId);
     return s?.pos || null;
   }
-    // --- TAKIM MAÇI / HIGHLIGHT helper'ları ---
+  // --- TAKIM MAÇI / HIGHLIGHT helper'ları ---
   const isTeamMatch = (m: any) =>
     (m?.createdFrom === 'TEAM_MATCH') || (!!(m as any)?.teamAId && !!(m as any)?.teamBId);
 
@@ -1210,17 +1220,17 @@ function MatchesScreen() {
     }
   }
 
-  async function rsvp(matchId: string, status: 'GOING'|'NOT_GOING') {
+  async function rsvp(matchId: string, status: 'GOING' | 'NOT_GOING') {
     try {
       const r = await fetch(`${API_URL}/matches/${matchId}/rsvp`, {
         method: 'POST',
-        headers: { 'Content-Type':'application/json', ...H() },
+        headers: { 'Content-Type': 'application/json', ...H() },
         body: JSON.stringify({ status }),
       });
-      const j = await r.json().catch(()=> ({}));
+      const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok !== true) throw new Error(j?.message || `HTTP ${r.status}`);
       alert(status === 'GOING' ? 'Bu hafta geliyorum kaydedildi.' : 'Bu hafta gelmeyeceğin kaydedildi.');
-    } catch (e:any) {
+    } catch (e: any) {
       alert(e?.message || 'RSVP hatası');
     }
   }
@@ -1229,11 +1239,11 @@ function MatchesScreen() {
     if (!confirm('Bu haftaki maçı iptal etmek istediğine emin misin?')) return;
     try {
       const r = await fetch(`${API_URL}/matches/${matchId}/cancel-week`, { method: 'POST', headers: { ...H() } });
-      const j = await r.json().catch(()=> ({}));
+      const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok !== true) throw new Error(j?.message || `HTTP ${r.status}`);
       alert('Bu haftaki maç iptal edildi.');
       refresh();
-    } catch (e:any) {
+    } catch (e: any) {
       alert(e?.message || 'İptal edilemedi');
     }
   }
@@ -1256,13 +1266,13 @@ function MatchesScreen() {
 
   // Filtrelenmiş liste
   const filtered = items.filter((m) => {
-    if (hidePast && m.time) { try { if (new Date(m.time) < new Date()) return false; } catch {} }
+    if (hidePast && m.time) { try { if (new Date(m.time) < new Date()) return false; } catch { } }
     if (level && m.level !== level) return false;
     if (format && m.format !== format) return false;
     return true;
   });
 
-    // Highlight'lar en üstte, sonra zamana göre (en yakın önce)
+  // Highlight'lar en üstte, sonra zamana göre (en yakın önce)
   const list = [...filtered].sort((a, b) => {
     const ah = isHighlighted(a), bh = isHighlighted(b);
     if (ah !== bh) return ah ? -1 : 1;
@@ -1283,13 +1293,13 @@ function MatchesScreen() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <label className="text-xs opacity-75">Seviye</label>
           <select value={level} onChange={(e) => setLevel(e.target.value as any)}
-                  className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
+            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
             <option value="">Hepsi</option><option>Kolay</option><option>Orta</option><option>Zor</option>
           </select>
 
           <label className="ml-2 text-xs opacity-75">Format</label>
           <select value={format} onChange={(e) => setFormat(e.target.value as any)}
-                  className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
+            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
             <option value="">Hepsi</option>
             <option>5v5</option><option>6v6</option><option>7v7</option><option>8v8</option><option>9v9</option><option>10v10</option><option>11v11</option>
           </select>
@@ -1311,7 +1321,7 @@ function MatchesScreen() {
 
       <div className="space-y-3">
         {list.map((m) => {
-          const teamMatch   = isTeamMatch(m);
+          const teamMatch = isTeamMatch(m);
           const highlighted = isHighlighted(m);
           const isOwner = m.ownerId === meId;
           const isSeriesMember = Boolean((m as any).access?.seriesMember);
@@ -1344,8 +1354,8 @@ function MatchesScreen() {
             <div
               key={m.id}
               className={
-              "rounded-2xl border p-3 sm:p-4 transition " +
-              (highlighted
+                "rounded-2xl border p-3 sm:p-4 transition " +
+                (highlighted
                   ? "border-rose-400/70 ring-1 ring-rose-400/40 bg-rose-500/5 shadow-[0_0_1.2rem_rgba(244,63,94,0.25)]"
                   : "border-white/10 ring-1 ring-white/10 bg-neutral-900/60")
               }
@@ -1369,11 +1379,11 @@ function MatchesScreen() {
                             Takım maçı
                           </BadgeBase>
                         )}
-                        {highlighted &&  (
+                        {highlighted && (
                           <BadgeBase className="bg-amber-500/20 text-amber-200 ring-amber-500/30">
                             Yeni eşleşme
                           </BadgeBase>
-                          )}
+                        )}
                         <h3 className="truncate text-base font-semibold leading-6">{title}</h3>
                       </div>
                     );
@@ -1469,7 +1479,7 @@ function MatchesScreen() {
                       >
                         Takvime ekle
                       </button>
-                      
+
                       {/* Seri ise RSVP grubu */}
                       {Boolean((m as any).seriesId) && (isOwner || isSeriesMember) && (
                         <>
@@ -1502,7 +1512,7 @@ function MatchesScreen() {
                           )}
                         </>
                       )}
-                      
+
                       {/* Maç bitti + 24s penceredeyse ve owner/katılımcıysa */}
                       {within24h && (mine || isOwner) && (
                         <button
@@ -1617,9 +1627,8 @@ function ProfileScreen() {
           {(["L", "R", "N"] as const).map((f) => (
             <button
               key={f}
-              className={`rounded-xl px-3 py-1.5 text-sm ${
-                foot === f ? "bg-emerald-600 text-neutral-950" : "bg-neutral-800"
-              }`}
+              className={`rounded-xl px-3 py-1.5 text-sm ${foot === f ? "bg-emerald-600 text-neutral-950" : "bg-neutral-800"
+                }`}
               onClick={() => setFoot(f)}
             >
               {f === "L" ? "Sol" : f === "R" ? "Sağ" : "Çift"}
@@ -1653,9 +1662,8 @@ function ProfileScreen() {
                 <button
                   key={p.key}
                   onClick={() => togglePos(p.key)}
-                  className={`rounded-xl px-3 py-1.5 text-sm ${
-                    active ? "bg-emerald-600 text-neutral-950" : "bg-neutral-800"
-                  }`}
+                  className={`rounded-xl px-3 py-1.5 text-sm ${active ? "bg-emerald-600 text-neutral-950" : "bg-neutral-800"
+                    }`}
                 >
                   {p.label}
                 </button>
@@ -1739,7 +1747,7 @@ const BASELINE_AVG: BehaviorAvg = {
 /** Elindeki computeSI fonksiyonunu kullanarak avg -> SI */
 function siFromAvg(avg: BehaviorAvg) {
   const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
-  const norm  = (v: number) => (clamp(v, 1, 5) - 1) / 4; // 1..5 → 0..1
+  const norm = (v: number) => (clamp(v, 1, 5) - 1) / 4; // 1..5 → 0..1
   const P = (norm(avg.punctuality) + norm(avg.respect) + norm(avg.sportsmanship)) / 3;
   const Nminus = (1 - norm(avg.swearing) + 1 - norm(avg.aggression)) / 2;
   return Math.round(100 * (0.6 * P + 0.4 * Nminus));
@@ -1757,12 +1765,12 @@ function RatingStars({
   const colorClass = (() => {
     const v = value;
     if (!negative) {
-      if (v >= 4)   return "text-sky-400";
+      if (v >= 4) return "text-sky-400";
       if (v >= 2.5) return "text-emerald-400";
       if (v >= 1.5) return "text-amber-400";
       return "text-rose-400";
     } else {
-      if (v >= 4)   return "text-rose-400";
+      if (v >= 4) return "text-rose-400";
       if (v >= 2.5) return "text-amber-400";
       if (v >= 1.5) return "text-emerald-400";
       return "text-sky-400";
@@ -1784,7 +1792,7 @@ function RatingStars({
             aria-hidden={true}
           >
             <title>{value.toFixed(1)}</title>
-            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
           </svg>
         ))}
       </div>
@@ -1827,14 +1835,14 @@ function PlayerProfile() {
     })();
   }, [me?.id, API_URL]);
 
-    const [posAgg, setPosAgg] = React.useState<Record<string,{avg:number,samples:number}>>({});
-    React.useEffect(()=>{
-      if(!me?.id) return;
-      fetch(`${API_URL}/users/${me.id}/positions`, { headers:{...authHeader()}, cache:'no-store' })
-        .then(r=>r.json())
-        .then(j=> setPosAgg(j?.byPos || {}))
-        .catch(()=> setPosAgg({}));
-    }, [me?.id]);
+  const [posAgg, setPosAgg] = React.useState<Record<string, { avg: number, samples: number }>>({});
+  React.useEffect(() => {
+    if (!me?.id) return;
+    fetch(`${API_URL}/users/${me.id}/positions`, { headers: { ...authHeader() }, cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => setPosAgg(j?.byPos || {}))
+      .catch(() => setPosAgg({}));
+  }, [me?.id]);
 
   /* ---- Hooks: koşulsuz en üstte çağır ---- */
   const [positionLevels, setPositionLevels] = React.useState<Record<string, number>>({});
@@ -1849,8 +1857,8 @@ function PlayerProfile() {
 
   /* ---- Guard return'lar: hook'lardan SONRA ---- */
   if (loading) return <div className="mx-auto max-w-4xl p-4">Yükleniyor…</div>;
-  if (error)   return <div className="mx-auto max-w-4xl p-4 text-red-400">✗ {error}</div>;
-  if (!me)     return null;
+  if (error) return <div className="mx-auto max-w-4xl p-4 text-red-400">✗ {error}</div>;
+  if (!me) return null;
 
   /* ---- Devam ---- */
   const prefs: string[] = Array.isArray(me.positions) ? me.positions : [];
@@ -1858,8 +1866,8 @@ function PlayerProfile() {
     (positionLevels && Object.keys(positionLevels).length > 0)
       ? positionLevels
       : (me?.positionLevels && typeof me.positionLevels === "object"
-          ? (me.positionLevels as any)
-          : {});
+        ? (me.positionLevels as any)
+        : {});
 
   // sahadaki anahtarı profil anahtarına eşle (STP -> CB gibi)
   const mapToProfileKey = (k: string) => (k === 'STP' ? 'CB' : k);
@@ -1921,9 +1929,8 @@ function PlayerProfile() {
               <button
                 key={f}
                 onClick={() => setFormation(f)}
-                className={`rounded-lg px-3 py-1 text-sm ${
-                  formation === f ? "bg-emerald-500 text-neutral-900" : "bg-neutral-800"
-                }`}
+                className={`rounded-lg px-3 py-1 text-sm ${formation === f ? "bg-emerald-500 text-neutral-900" : "bg-neutral-800"
+                  }`}
               >
                 {f}
               </button>
@@ -1941,7 +1948,7 @@ function PlayerProfile() {
                 pos={p as any}
                 prefIndex={prefs.indexOf(p.key as any)}
                 skill={skillOf(p.key)}
-                onClick={() => {}}
+                onClick={() => { }}
               />
             ))}
           </div>
@@ -1958,7 +1965,7 @@ function PlayerProfile() {
                       key={k}
                       className="rounded-full bg-emerald-500/20 px-3 py-1 text-sm text-emerald-300"
                     >
-                      { i + 1 }. {traitPosLabel(k)} • {Number(skillOf(k)).toFixed(1)}
+                      {i + 1}. {traitPosLabel(k)} • {Number(skillOf(k)).toFixed(1)}
                     </span>
                   ))
                 ) : (
@@ -1977,11 +1984,11 @@ function PlayerProfile() {
 
               {!bLoading && (
                 <>
-                  <RatingStars label="Dakiklik"   value={showAvg.punctuality} />
-                  <RatingStars label="Saygı"       value={showAvg.respect} />
+                  <RatingStars label="Dakiklik" value={showAvg.punctuality} />
+                  <RatingStars label="Saygı" value={showAvg.respect} />
                   <RatingStars label="Sportmenlik" value={showAvg.sportsmanship} />
-                  <RatingStars label="Küfür"       value={showAvg.swearing}    />
-                  <RatingStars label="Agresiflik"  value={showAvg.aggression}  />
+                  <RatingStars label="Küfür" value={showAvg.swearing} />
+                  <RatingStars label="Agresiflik" value={showAvg.aggression} />
 
                   <div className="mt-3 flex items-center justify-between rounded-xl bg-neutral-800 p-3">
                     <div>
@@ -2002,7 +2009,7 @@ function PlayerProfile() {
                       <ul className="list-disc pl-4">
                         {warnings.map(([k, v]) => (
                           <li key={k}>
-                            {({ punctuality:"Dakiklik", respect:"Saygı", sportsmanship:"Sportmenlik", swearing:"Küfür", aggression:"Agresiflik" } as any)[k]}{" "}
+                            {({ punctuality: "Dakiklik", respect: "Saygı", sportsmanship: "Sportmenlik", swearing: "Küfür", aggression: "Agresiflik" } as any)[k]}{" "}
                             ort. {v.toFixed(1)} — {v < 1.5 ? "kırmızı" : "sarı"}
                           </li>
                         ))}
@@ -2059,9 +2066,8 @@ function PositionBadge({
   return (
     <button
       onClick={onClick}
-      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-xl px-2 py-1 text-xs shadow transition ${
-        active ? "bg-emerald-500 text-neutral-950" : "bg-black/60 text-white"
-      }`}
+      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-xl px-2 py-1 text-xs shadow transition ${active ? "bg-emerald-500 text-neutral-950" : "bg-black/60 text-white"
+        }`}
       style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
       title={`${pos.label} • Seviye ${skill}`}
     >
@@ -2090,9 +2096,8 @@ function TraitRow({
           <button
             key={n}
             onClick={() => onChange(n)}
-            className={`grid size-8 place-items-center rounded-md ${
-              value >= n ? (negative ? "bg-red-500/70" : "bg-emerald-500/80") : "bg-neutral-800"
-            }`}
+            className={`grid size-8 place-items-center rounded-md ${value >= n ? (negative ? "bg-red-500/70" : "bg-emerald-500/80") : "bg-neutral-800"
+              }`}
           >
             <IconStar className="size-4" />
           </button>
@@ -2101,3 +2106,306 @@ function TraitRow({
     </div>
   );
 }
+
+/* ---------------------- Hesap Ayarları Ekranı ---------------------- */
+
+function AccountScreen() {
+  const { me, refresh } = useMe();
+  const [saving, setSaving] = React.useState(false);
+
+  // Form fields
+  const [name, setName] = React.useState("");
+  const [surname, setSurname] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [username, setUsername] = React.useState("");
+  const [discoverable, setDiscoverable] = React.useState(false);
+  const [birthDate, setBirthDate] = React.useState("");
+  const [height, setHeight] = React.useState("");
+  const [weight, setWeight] = React.useState("");
+
+  // Password fields
+  const [currentPassword, setCurrentPassword] = React.useState("");
+  const [newPassword, setNewPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
+
+  // Password verification for sensitive changes
+  const [verifyPassword, setVerifyPassword] = React.useState("");
+  const [showVerification, setShowVerification] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!me) return;
+    setName(me.name || "");
+    setSurname(me.surname || "");
+    setEmail(me.email || "");
+    setUsername(me.username || "");
+    setDiscoverable(me.discoverable || false);
+    setBirthDate(me.birthDate ? new Date(me.birthDate).toISOString().split('T')[0] : "");
+    setHeight(me.height?.toString() || "");
+    setWeight(me.weight?.toString() || "");
+  }, [me]);
+
+  async function saveProfile() {
+    const sensitiveChanged =
+      name !== (me?.name || "") ||
+      surname !== (me?.surname || "") ||
+      email !== (me?.email || "") ||
+      username !== (me?.username || "");
+
+    if (sensitiveChanged && !verifyPassword) {
+      setShowVerification(true);
+      alert("Güvenlik için mevcut şifrenizi girin.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const hdr = authHeader();
+      if (!hdr.Authorization) {
+        alert("Giriş yapmalısın.");
+        return;
+      }
+
+      const body: any = {
+        name,
+        surname,
+        email,
+        username,
+        discoverable,
+        birthDate,
+        height: height ? Number(height) : undefined,
+        weight: weight ? Number(weight) : undefined,
+      };
+
+      if (sensitiveChanged) {
+        body.currentPassword = verifyPassword;
+      }
+
+      const r = await fetch(`${API_URL}/users/me`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...hdr },
+        body: JSON.stringify(body),
+      });
+
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.message || `HTTP ${r.status}`);
+
+      alert("Profil güncellendi!");
+      setVerifyPassword("");
+      setShowVerification(false);
+      await refresh?.();
+    } catch (e: any) {
+      alert(e?.message || "Kaydetme hatası");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changePassword() {
+    if (!currentPassword || !newPassword) {
+      alert("Tüm şifre alanlarını doldurun.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      alert("Yeni şifreler eşleşmiyor.");
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      alert("Yeni şifre en az 6 karakter olmalı.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const hdr = authHeader();
+      if (!hdr.Authorization) {
+        alert("Giriş yapmalısın.");
+        return;
+      }
+
+      const r = await fetch(`${API_URL}/users/me/password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...hdr },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
+      });
+
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.message || `HTTP ${r.status}`);
+
+      alert("Şifre değiştirildi!");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (e: any) {
+      alert(e?.message || "Şifre değiştirme hatası");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl p-4 space-y-4">
+      {/* Hesap Bilgileri */}
+      <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+        <div className="mb-3 text-lg font-semibold">Hesap Bilgileri</div>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Ad</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="Adınız"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Soyad</label>
+            <input
+              type="text"
+              value={surname}
+              onChange={(e) => setSurname(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="Soyadınız"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">E-posta</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="ornek@email.com"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Kullanıcı Adı</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="kullaniciadi"
+            />
+          </div>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="block text-sm text-neutral-300 mb-1">Doğum Tarihi</label>
+              <input
+                type="date"
+                value={birthDate}
+                onChange={(e) => setBirthDate(e.target.value)}
+                className="w-full rounded-xl bg-neutral-800 px-3 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm text-neutral-300 mb-1">Boy (cm)</label>
+              <input
+                type="number"
+                min="0"
+                value={height}
+                onChange={(e) => setHeight(e.target.value)}
+                className="w-full rounded-xl bg-neutral-800 px-3 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+                placeholder="170"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm text-neutral-300 mb-1">Kilo (kg)</label>
+              <input
+                type="number"
+                min="0"
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+                className="w-full rounded-xl bg-neutral-800 px-3 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+                placeholder="70"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="discoverable"
+              checked={discoverable}
+              onChange={(e) => setDiscoverable(e.target.checked)}
+              className="size-4"
+            />
+            <label htmlFor="discoverable" className="text-sm text-neutral-300">
+              Keşfet sayfasında görünür ol
+            </label>
+          </div>
+          {showVerification && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3">
+              <label className="block text-sm text-amber-300 mb-2">
+                Güvenlik doğrulaması için mevcut şifrenizi girin
+              </label>
+              <input
+                type="password"
+                value={verifyPassword}
+                onChange={(e) => setVerifyPassword(e.target.value)}
+                className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-amber-500/30 focus:ring-2 focus:ring-amber-400"
+                placeholder="Mevcut şifre"
+              />
+            </div>
+          )}
+          <button
+            onClick={saveProfile}
+            disabled={saving}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
+          >
+            {saving ? "Kaydediliyor..." : "Bilgileri Kaydet"}
+          </button>
+        </div>
+      </div>
+
+      {/* Şifre Değiştirme */}
+      <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+        <div className="mb-3 text-lg font-semibold">Şifre Değiştir</div>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Mevcut Şifre</label>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="Mevcut şifreniz"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Yeni Şifre</label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="En az 6 karakter"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-neutral-300 mb-1">Yeni Şifre (Tekrar)</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full rounded-xl bg-neutral-800 px-4 py-2 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
+              placeholder="Yeni şifrenizi tekrar girin"
+            />
+          </div>
+          <button
+            onClick={changePassword}
+            disabled={saving}
+            className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold hover:bg-rose-500 disabled:opacity-50"
+          >
+            {saving ? "Değiştiriliyor..." : "Şifreyi Değiştir"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

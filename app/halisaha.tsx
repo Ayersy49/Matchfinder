@@ -3,6 +3,9 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarDays, UserRound, Shield, LogIn, Star, Footprints } from "lucide-react";
+import { setToken } from '@/lib/auth';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
 
 // 10 büyük lig – stadyum görselleri (demo amaçlı Unsplash linkleri)
 const STADIUMS = [
@@ -68,40 +71,65 @@ export default function Page() {
 }
 
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
+  const [idx, setIdx] = React.useState(0);
+  React.useEffect(() => {
     const id = setInterval(() => setIdx((i) => (i + 1) % STADIUMS.length), 4500);
     return () => clearInterval(id);
   }, []);
 
-  const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("");
+  const [phone, setPhone] = React.useState("");
+  const [code, setCode] = React.useState("");
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(false);
+
+  async function requestCode() {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const r = await fetch(`${API_URL}/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data?.ok) throw new Error(data?.reason || 'Kod gönderilemedi');
+      setMsg(data?.devCode ? `Dev kod: ${data.devCode}` : 'Kod gönderildi.');
+    } catch (e: any) {
+      setMsg(e?.message || 'Kod gönderilemedi');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function verifyCode() {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const r = await fetch(`${API_URL}/auth/otp/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data?.ok || !data?.accessToken) {
+        throw new Error(data?.reason || 'Doğrulama başarısız');
+      }
+      // KRİTİK: token’ı kaydet
+      setToken(data.accessToken);
+      // İstersen mesaj verip sonra yönlendir
+      onSuccess?.();
+      window.location.href = '/discover';
+    } catch (e: any) {
+      setMsg(e?.message || 'Giriş yapılamadı');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="relative min-h-dvh overflow-hidden">
-      {/* Arkaplan slaytı */}
-      <div className="absolute inset-0">
-        {STADIUMS.map((src, i) => (
-          <img
-            key={i}
-            src={src}
-            alt="stadium"
-            className={`absolute inset-0 size-full object-cover transition-opacity duration-1000 ${i === idx ? "opacity-100" : "opacity-0"}`}
-          />
-        ))}
-        <div className="absolute inset-0 bg-black/70" />
-      </div>
-
-      {/* İçerik */}
+      {/* arkaplan ve görsel kısmın aynı kalsın */}
       <div className="relative z-10 min-h-dvh flex flex-col items-center justify-center p-6">
-        <div className="mb-8 text-center">
-          <div className="inline-flex items-center gap-3 text-3xl font-semibold">
-            <Footprints className="size-8" />
-            <span>MatchFinder</span>
-          </div>
-          <p className="mt-2 text-sm text-neutral-300">Bölge + Pozisyon + Seviye ile maça katıl</p>
-        </div>
-
         <div className="w-full max-w-sm rounded-2xl bg-neutral-900/70 backdrop-blur p-5 shadow-xl ring-1 ring-white/10">
           <div className="space-y-3">
             <label className="block text-sm text-neutral-300">Telefon Numarası</label>
@@ -112,6 +140,17 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
               className="w-full rounded-xl bg-neutral-800 px-4 py-3 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
               inputMode="tel"
             />
+            <div className="flex gap-2">
+              <button disabled={loading} onClick={requestCode}
+                className="inline-flex flex-1 items-center justify-center rounded-xl bg-neutral-800 px-4 py-3 hover:bg-neutral-700">
+                Kodu Gönder
+              </button>
+              <button disabled={loading} onClick={verifyCode}
+                className="inline-flex flex-1 items-center justify-center rounded-xl bg-emerald-500 px-4 py-3 font-medium text-neutral-950 hover:bg-emerald-400">
+                Doğrula
+              </button>
+            </div>
+
             <label className="block text-sm text-neutral-300">OTP Kodu</label>
             <input
               value={code}
@@ -120,19 +159,18 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
               className="w-full rounded-xl bg-neutral-800 px-4 py-3 tracking-widest outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400"
               inputMode="numeric"
             />
-            <button
-              onClick={onSuccess}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 font-medium text-neutral-950 hover:bg-emerald-400 active:scale-[.99]"
-            >
-              <LogIn className="size-5" /> Giriş Yap
-            </button>
-            <p className="text-xs text-neutral-400">Giriş ile <a className="underline">KVKK Aydınlatma</a> ve <a className="underline">Kullanım Koşulları</a>nı kabul edersiniz.</p>
+
+            {msg && <div className="rounded-md bg-amber-600/20 px-3 py-2 text-sm text-amber-200">{msg}</div>}
+            <p className="text-xs text-neutral-400">
+              Giriş ile <a className="underline">KVKK Aydınlatma</a> ve <a className="underline">Kullanım Koşulları</a>nı kabul edersiniz.
+            </p>
           </div>
         </div>
       </div>
     </div>
   );
 }
+
 
 function MainShell({ activeTab, onTab }: { activeTab: "matches" | "profile" | "player"; onTab: (t: any) => void }) {
   return (

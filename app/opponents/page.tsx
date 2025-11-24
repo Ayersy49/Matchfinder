@@ -19,12 +19,38 @@ function sizeFromFormat(fmt?: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** Takımın aktif formasyonundaki slot sayısı */
-function activeTeamSize(team: any): number {
-  if (!team) return 11;
-  const code = team.formationCode;
+/** Takımın format boyutu (yedekler hariç) */
+function getFormatSize(team: any): number {
+  if (!team) return 11; // varsayılan
+  // Eğer team.size varsa ve bu "format" ise onu kullanabiliriz, ama genelde formationCode daha güvenilir
+  // Ancak user "5v5" gibi custom formatlar seçmiş olabilir.
+  // Backend'de "size" alanı formatı tutuyorsa onu kullanalım.
+  // Şimdilik formationCode üzerinden gidelim:
+  const code = team.formationCode || "";
+  if (code.includes("-")) {
+    // "4-2-3-1" -> 11
+    // "3-5-2" -> 11
+    // "4-4-2" -> 11
+    // "8v8" -> 8 (eğer code böyle geliyorsa)
+    return 11;
+  }
+  // "5v5", "7v7" gibi stringler gelebilir mi? Kontrol edelim.
+  // Eğer code "5v5" ise:
+  const m = code.match(/^(\d+)v\d+$/i);
+  if (m) return parseInt(m[1], 10);
+
+  // team.size alanı varsa ve mantıklıysa (5..11) onu dön
+  if (typeof team.size === 'number' && team.size > 0) return team.size;
+
+  return 11;
+}
+
+/** Takımdaki toplam dolu slot sayısı (yedekler dahil) */
+function getTotalMemberCount(team: any): number {
+  if (!team) return 0;
   const slots = Array.isArray(team.positionSlots) ? team.positionSlots : [];
-  return slots.filter((s: any) => s.formationCode === code).length || 11;
+  // Sadece dolu slotları say (userId veya locked)
+  return slots.filter((s: any) => s.userId || s.locked).length;
 }
 
 export default function OpponentsPage() {
@@ -256,9 +282,13 @@ export default function OpponentsPage() {
                       (o: any) => o.offerTeamId === t.id
                     );
                     const key = `${r.id}:${t.id}`;
-                    const mySize = activeTeamSize(t);
+
+                    const myFormatSize = getFormatSize(t);
+                    const totalMembers = getTotalMemberCount(t);
+                    const subsCount = Math.max(0, totalMembers - myFormatSize);
+
                     const sizeMismatch =
-                      typeof expectedSize === "number" && mySize !== expectedSize;
+                      typeof expectedSize === "number" && myFormatSize !== expectedSize;
 
                     const disabled = already || sendingKey === key || sizeMismatch;
 
@@ -267,24 +297,23 @@ export default function OpponentsPage() {
                         key={t.id}
                         disabled={disabled}
                         onClick={() => void handleOffer(r.id, t.id)}
-                        className={`rounded-lg px-3 py-1.5 text-xs ${
-                          disabled
+                        className={`rounded-lg px-3 py-1.5 text-xs ${disabled
                             ? "bg-neutral-800 text-neutral-400 opacity-60 cursor-not-allowed"
                             : "bg-neutral-800 hover:bg-neutral-700"
-                        }`}
+                          }`}
                         title={
                           sizeMismatch
-                            ? `Boyut uymuyor: ilan ${expectedSize}v${expectedSize}, takımın ${mySize}v${mySize}`
+                            ? `Boyut uymuyor: ilan ${expectedSize}v${expectedSize}, takımın ${myFormatSize}v${myFormatSize}`
                             : already
-                            ? "Bu takımdan teklif gönderildi"
-                            : `${t.name} ile teklif et`
+                              ? "Bu takımdan teklif gönderildi"
+                              : `${t.name} ile teklif et`
                         }
                       >
                         {already
                           ? "Teklif gönderildi"
                           : sizeMismatch
-                          ? `${t.name} (${mySize}v${mySize}) — UYUŞMUYOR`
-                          : `${t.name} (${mySize}v${mySize}) ile teklif et`}
+                            ? `${t.name} (${myFormatSize}v${myFormatSize}) — UYUŞMUYOR`
+                            : `${t.name} (${myFormatSize}v${myFormatSize}${subsCount > 0 ? ` +${subsCount}` : ''}) ile teklif et`}
                       </button>
                     );
                   })}

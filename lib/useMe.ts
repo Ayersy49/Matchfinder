@@ -19,7 +19,14 @@ const DEFAULT_AVAILABILITY = {
 
 type Me = {
   id: string | null;
+  username?: string | null;
+  name?: string | null;
+  email?: string | null;
   phone: string | null;
+  lastname?: string | null;
+  surname?: string | null;  // Alias for lastname
+  birthDate?: string | null;
+  discoverable?: boolean;
   dominantFoot: "L" | "R" | "B" | "N";
   positions: string[];
   preferredFormation?: "4-2-3-1" | "4-3-3" | "3-5-2";
@@ -28,15 +35,26 @@ type Me = {
   level: number;
   createdAt?: string | null;
   updatedAt?: string | null;
-  posLocked?: string [];
-  topPositions?: string [];
-  top3WithLevels?: { pos: string; level: number } [];
+  posLocked?: string[];
+  topPositions?: string[];
+  top3WithLevels?: { pos: string; level: number }[];
+  age?: number | null;
+  height?: number | null;
+  weight?: number | null;
+  gender?: string | null;
 };
 
 function normalizeMe(data: any): Me {
   return {
     id: data?.id ?? null,
+    username: data?.username ?? null,
+    name: data?.name ?? null,
+    email: data?.email ?? null,
     phone: data?.phone ?? null,
+    lastname: data?.lastname ?? null,
+    surname: data?.surname ?? data?.lastname ?? null,
+    birthDate: data?.birthDate ?? null,
+    discoverable: typeof data?.discoverable === 'boolean' ? data.discoverable : false,
     dominantFoot: (data?.dominantFoot as Me["dominantFoot"]) ?? "N",
     positions: Array.isArray(data?.positions) ? data.positions : [],
     preferredFormation:
@@ -52,6 +70,10 @@ function normalizeMe(data: any): Me {
     level: typeof data?.level === "number" ? data.level : 5,
     createdAt: data?.createdAt ?? null,
     updatedAt: data?.updatedAt ?? null,
+    age: typeof data?.age === 'number' ? data.age : null,
+    height: typeof data?.height === 'number' ? data.height : null,
+    weight: typeof data?.weight === 'number' ? data.weight : null,
+    gender: typeof data?.gender === 'string' ? data.gender : null,
   };
 }
 
