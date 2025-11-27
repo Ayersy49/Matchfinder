@@ -19,30 +19,31 @@ function sizeFromFormat(fmt?: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** Takımın format boyutu (yedekler hariç) */
+/** Takımın format boyutu (yedekler hariç slot sayısı) */
 function getFormatSize(team: any): number {
   if (!team) return 11; // varsayılan
-  // Eğer team.size varsa ve bu "format" ise onu kullanabiliriz, ama genelde formationCode daha güvenilir
-  // Ancak user "5v5" gibi custom formatlar seçmiş olabilir.
-  // Backend'de "size" alanı formatı tutuyorsa onu kullanalım.
-  // Şimdilik formationCode üzerinden gidelim:
-  const code = team.formationCode || "";
-  if (code.includes("-")) {
-    // "4-2-3-1" -> 11
-    // "3-5-2" -> 11
-    // "4-4-2" -> 11
-    // "8v8" -> 8 (eğer code böyle geliyorsa)
-    return 11;
+  
+  // positionSlots varsa, bench olmayan slotları say
+  const slots = Array.isArray(team.positionSlots) ? team.positionSlots : [];
+  if (slots.length > 0) {
+    // Bench slotları: SB1, SB2, SB3
+    const fieldSlots = slots.filter((s: any) => !/^SB\d+$/i.test(s.slotKey || ''));
+    if (fieldSlots.length > 0) {
+      return fieldSlots.length;
+    }
   }
-  // "5v5", "7v7" gibi stringler gelebilir mi? Kontrol edelim.
-  // Eğer code "5v5" ise:
+  
+  // team.size alanı varsa ve mantıklıysa (5..11) onu dön
+  if (typeof team.size === 'number' && team.size >= 5 && team.size <= 11) {
+    return team.size;
+  }
+  
+  // formationCode "5v5" gibi bir formattaysa
+  const code = team.formationCode || "";
   const m = code.match(/^(\d+)v\d+$/i);
   if (m) return parseInt(m[1], 10);
 
-  // team.size alanı varsa ve mantıklıysa (5..11) onu dön
-  if (typeof team.size === 'number' && team.size > 0) return team.size;
-
-  return 11;
+  return 11; // varsayılan
 }
 
 /** Takımdaki toplam dolu slot sayısı (yedekler dahil) */

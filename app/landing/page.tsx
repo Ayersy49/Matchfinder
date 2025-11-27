@@ -1064,6 +1064,7 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
   // Filtreler
   const [level, setLevel] = React.useState<"" | "Kolay" | "Orta" | "Zor">("");
   const [format, setFormat] = React.useState<"" | "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11">("");
+  const [matchType, setMatchType] = React.useState<"" | "team" | "series" | "classic">("");
   const [hidePast, setHidePast] = React.useState(true);
 
   // Kullanıcının ilk 3 tercihi
@@ -1116,6 +1117,10 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
   // --- TAKIM MAÇI / HIGHLIGHT helper'ları ---
   const isTeamMatch = (m: any) =>
     (m?.createdFrom === 'TEAM_MATCH') || (!!(m as any)?.teamAId && !!(m as any)?.teamBId);
+
+  const isSeriesMatch = (m: any) => Boolean((m as any)?.seriesId);
+
+  const isClassicMatch = (m: any) => !isTeamMatch(m) && !isSeriesMatch(m);
 
   const isHighlighted = (m: any) => {
     if (!isTeamMatch(m)) return false;
@@ -1270,13 +1275,25 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
     if (hidePast && m.time) { try { if (new Date(m.time) < new Date()) return false; } catch { } }
     if (level && m.level !== level) return false;
     if (format && m.format !== format) return false;
+    // Maç türü filtresi
+    if (matchType === "team" && !isTeamMatch(m)) return false;
+    if (matchType === "series" && !isSeriesMatch(m)) return false;
+    if (matchType === "classic" && !isClassicMatch(m)) return false;
     return true;
   });
 
-  // Highlight'lar en üstte, sonra zamana göre (en yakın önce)
+  // Sıralama: Takım maçları > Seri maçları > Klasik maçlar (her grup içinde zamana göre)
   const list = [...filtered].sort((a, b) => {
-    const ah = isHighlighted(a), bh = isHighlighted(b);
-    if (ah !== bh) return ah ? -1 : 1;
+    // Öncelik sırası: Takım maçı (2), Seri maçı (1), Klasik (0)
+    const getPriority = (m: any) => {
+      if (isTeamMatch(m)) return 2;
+      if (isSeriesMatch(m)) return 1;
+      return 0;
+    };
+    const pa = getPriority(a), pb = getPriority(b);
+    if (pa !== pb) return pb - pa; // Yüksek öncelik önce
+
+    // Aynı öncelikte: zamana göre (en yakın önce)
     const ta = a.time ? Date.parse(String(a.time)) : Number.POSITIVE_INFINITY;
     const tb = b.time ? Date.parse(String(b.time)) : Number.POSITIVE_INFINITY;
     return ta - tb;
@@ -1292,6 +1309,15 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
         </Link>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <label className="text-xs opacity-75">Tür</label>
+          <select value={matchType} onChange={(e) => setMatchType(e.target.value as any)}
+            className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
+            <option value="">Hepsi</option>
+            <option value="team">Takım Maçları</option>
+            <option value="series">Seri Maçları</option>
+            <option value="classic">Klasik Maçlar</option>
+          </select>
+
           <label className="text-xs opacity-75">Seviye</label>
           <select value={level} onChange={(e) => setLevel(e.target.value as any)}
             className="rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1 text-sm">
@@ -1332,34 +1358,62 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
           const miss = missingOf(m);
           const prefHit = prefs.find((p) => miss.includes(p));
 
-          // Doluluk
+          // Doluluk - Saha ve Yedek ayrımı
           const slotsArr: any[] = Array.isArray((m as any)?.slots) ? (m as any).slots : [];
-          const total = slotsArr.length || (typeof m.format === "string" ? (() => {
+          
+          // Bench slotlarını ayır (SB1, SB2, SB3 veya bench içeren pozisyonlar)
+          const isBenchSlot = (s: any) => {
+            const key = String(s?.slotKey || s?.pos || '');
+            return /^SB\d+$/i.test(key) || key.toLowerCase().includes('bench') || key.toLowerCase().includes('sub');
+          };
+          
+          const fieldSlots = slotsArr.filter(s => !isBenchSlot(s));
+          const benchSlots = slotsArr.filter(s => isBenchSlot(s));
+          
+          // Saha doluluk hesabı
+          const fieldTotal = fieldSlots.length || (typeof m.format === "string" ? (() => {
             const n = parseInt(String(m.format).split("v")[0], 10);
             return Number.isFinite(n) ? n * 2 : 0;
           })() : 0);
-          const filled = slotsArr.filter((s) => s?.userId).length;
-          const pct = total ? Math.round((filled / total) * 100) : 0;
-          const isFull = total > 0 && filled >= total;
+          const fieldFilled = fieldSlots.filter((s) => s?.userId).length;
+          const pct = fieldTotal ? Math.round((fieldFilled / fieldTotal) * 100) : 0;
+          const isFull = fieldTotal > 0 && fieldFilled >= fieldTotal;
+          
+          // Yedek doluluk hesabı
+          const benchTotal = benchSlots.length;
+          const benchFilled = benchSlots.filter((s) => s?.userId).length;
 
           // 24 saat penceresi
           const now = Date.now();
           const t = m.time ? new Date(m.time).getTime() : 0;
           const ended = t && t < now;
           const within24h = ended && now - t <= 24 * 3600 * 1000;
+          
+          // Kadro eksik kontrolü: Maç saati geçmiş + kadro tam değil
+          const isIncomplete = ended && !isFull;
+          // Maç yaklaşıyor uyarısı: 2 saat içinde + kadro tam değil
+          const isApproaching = t && !ended && (t - now) <= 2 * 3600 * 1000;
+          const needsRosterWarning = isApproaching && !isFull;
 
           // etkin durum (backend dönerse onu kullan)
           const eff = (m as any).statusEffective ?? m.status;
 
+          // Kart stil sınıfları: Takım maçı = kırmızı, Seri maçı = lacivert, Normal = varsayılan
+          const seriesMatch = isSeriesMatch(m);
+          const getCardStyle = () => {
+            if (teamMatch) {
+              return "border-rose-500/70 ring-1 ring-rose-500/40 bg-rose-500/10 shadow-[0_0_1.2rem_rgba(244,63,94,0.25)]";
+            }
+            if (seriesMatch) {
+              return "border-indigo-500/70 ring-1 ring-indigo-500/40 bg-indigo-500/10 shadow-[0_0_1.2rem_rgba(99,102,241,0.25)]";
+            }
+            return "border-white/10 ring-1 ring-white/10 bg-neutral-900/60";
+          };
+
           return (
             <div
               key={m.id}
-              className={
-                "rounded-2xl border p-3 sm:p-4 transition " +
-                (highlighted
-                  ? "border-rose-400/70 ring-1 ring-rose-400/40 bg-rose-500/5 shadow-[0_0_1.2rem_rgba(244,63,94,0.25)]"
-                  : "border-white/10 ring-1 ring-white/10 bg-neutral-900/60")
-              }
+              className={"rounded-2xl border p-3 sm:p-4 transition " + getCardStyle()}
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 {/* Sol: başlık + meta */}
@@ -1367,7 +1421,7 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
                   {(() => {
                     const title = (m.title || "Maç").trim();
                     const isTitleIlk = title.toLocaleLowerCase("tr-TR") === "ilk";
-                    const showSeriesBadge = Boolean((m as any).seriesId) && !isTitleIlk;
+                    const showSeriesBadge = seriesMatch && !isTitleIlk;
 
                     return (
                       <div className="flex flex-wrap items-center gap-2">
@@ -1376,13 +1430,24 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
                         {eff === "DRAFT" && <BadgeNeutral>Taslak</BadgeNeutral>}
                         {eff === "CLOSED" && <BadgeClosed />}         {/* Kırmızımsı */}
                         {teamMatch && (
-                          <BadgeBase className="bg-emerald-500/15 text-emerald-300 ring-emerald-500/30">
+                          <BadgeBase className="bg-rose-500/20 text-rose-200 ring-rose-500/30">
                             Takım maçı
                           </BadgeBase>
                         )}
                         {highlighted && (
                           <BadgeBase className="bg-amber-500/20 text-amber-200 ring-amber-500/30">
                             Yeni eşleşme
+                          </BadgeBase>
+                        )}
+                        {/* Kadro eksik uyarıları */}
+                        {isIncomplete && (
+                          <BadgeBase className="bg-red-600/30 text-red-300 ring-red-500/40">
+                            ❌ Kadro Eksik - İptal
+                          </BadgeBase>
+                        )}
+                        {needsRosterWarning && !isIncomplete && (
+                          <BadgeBase className="bg-orange-500/20 text-orange-300 ring-orange-500/30 animate-pulse">
+                            ⚠️ Kadro Eksik
                           </BadgeBase>
                         )}
                         <h3 className="truncate text-base font-semibold leading-6">{title}</h3>
@@ -1410,10 +1475,15 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
                       <div className="h-1.5 rounded-full bg-white/70" style={{ width: `${pct}%` }} />
                     </div>
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-neutral-400">
-                      <span>{filled}/{total} ({pct}%)</span>
+                      <span>{fieldFilled}/{fieldTotal} ({pct}%)</span>
+                      {benchTotal > 0 && (
+                        <span className="text-neutral-500">
+                          +{benchFilled}/{benchTotal} yedek
+                        </span>
+                      )}
                       {isFull && (
-                        <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-rose-300 ring-1 ring-rose-500/30">
-                          Dolu
+                        <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-emerald-300 ring-1 ring-emerald-500/30">
+                          Kadro Tam
                         </span>
                       )}
                     </div>

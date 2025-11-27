@@ -1,279 +1,288 @@
-/* app/oyuncu/page.tsx */
+"use client";
 
-'use client';
+import * as React from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import FooterTabs from "@/components/FooterTabs";
 
-import * as React from 'react';
-import { useMe } from '@/lib/useMe';
-import { myId } from '@/lib/auth';
-import BehaviorRatings from './BehaviorRatings';
-import FooterTabs from '@/components/FooterTabs';
 
-/** Saha üstü küçük etiketler için gösterilecek pozisyon isimleri */
-const POS_LABELS: Record<string, string> = {
-  GK: 'GK',
-  LB: 'LB',
-  CB: 'CB',
-  RB: 'RB',
-  LWB: 'LWB',
-  RWB: 'RWB',
-  DM: 'DM',
-  CM: 'CM',
-  AM: 'AM',
-  LW: 'LW',
-  RW: 'RW',
-  ST: 'ST',
-};
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-type Formation = '4-2-3-1' | '4-3-3' | '3-5-2';
-
-/** Her diziliş için sahada kabaca koordinatlar (top,left) */
-const XY_4231: Record<string, [number, number]> = {
-  GK: [140, 30],
-  LB: [70, 120],
-  CB: [140, 120],
-  RB: [210, 120],
-  DM: [140, 240],
-  CM: [140, 280],
-  AM: [140, 320],
-  LW: [80, 360],
-  RW: [200, 360],
-  ST: [140, 420],
-};
-
-const XY_433: Record<string, [number, number]> = {
-  GK: [140, 30],
-  LB: [70, 120],
-  CB: [140, 120],
-  RB: [210, 120],
-  CM: [90, 260],
-  AM: [140, 300],
-  DM: [190, 260],
-  LW: [80, 360],
-  RW: [200, 360],
-  ST: [140, 420],
-};
-
-const XY_352: Record<string, [number, number]> = {
-  GK: [140, 30],
-  LWB: [90, 170],
-  CB: [140, 120],
-  RWB: [190, 170],
-  DM: [120, 250],
-  CM: [160, 250],
-  AM: [140, 300],
-  LW: [90, 360],
-  RW: [190, 360],
-  ST: [140, 420],
-};
-
-/** Aktif dizilişe göre kullanılacak koordinat haritası */
-function getXY(formation: Formation) {
-  if (formation === '3-5-2') return XY_352;
-  if (formation === '4-3-3') return XY_433;
-  return XY_4231;
+function getToken(): string {
+  try {
+    return (
+      localStorage.getItem("token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("jwt") ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+function authHeader(): Record<string, string> {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-export default function OyuncuPage() {
-  const { me, loading, error } = useMe();
-  const [formation, setFormation] = React.useState<Formation>('4-2-3-1');
+type AvItem = { dow: number; start: string; end: string };
 
-  if (loading) return <div style={{ padding: 24 }}>Yükleniyor…</div>;
-  if (error) return <div style={{ padding: 24 }}>❌ {error}</div>;
-  if (!me) return null;
-  // profil sayfasında verdiğin seviyeler (yoksa genel seviyeye düş)
-  const posMap = (me.positionLevels || {}) as Record<string, number>;
-  const valueOf = (p: string) => (posMap[p] ?? me.level);
-  const labelOf = (p: string) => (POS_LABELS[p] ?? p);
+export default function FriendPublicProfilePage() {
+  // ⬇️ params'ı props’tan almak yerine hook ile alıyoruz
+  const params = useParams<{ id: string }>();
+  const id = React.useMemo(() => {
+    const v = (params as any)?.id;
+    return Array.isArray(v) ? v[0] : v || "";
+  }, [params]);
 
+  const [data, setData] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
 
-  // sahada göstereceğimiz 3 tercih
-  const prefs: string[] = Array.isArray(me.positions) ? me.positions.slice(0, 3) : [];
-  const xy = getXY(formation);
-  const visiblePositions = Object.keys(xy); // o dizilişte sahaya konan rozetler
+  React.useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`${API_URL}/users/${id}/public-profile`, {
+          headers: { ...authHeader() },
+          cache: "no-store",
+        });
+        if (!r.ok) throw new Error(String(r.status));
+        const json = await r.json().catch(() => ({}));
+        if (!cancelled) setData(json);
+      } catch {
+        if (!cancelled) setError("Profil yüklenemedi.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  function coerceAvail(av: any): AvItem[] {
+    if (!av) return [];
+    if (Array.isArray(av)) {
+      return av
+        .map((x: any) => ({
+          dow: Number(x?.dow),
+          start: String(x?.start || "").slice(0, 5),
+          end: String(x?.end || "").slice(0, 5),
+        }))
+        .filter((x) => x.dow >= 1 && x.dow <= 7 && x.start && x.end && x.start < x.end)
+        .sort((a, b) => (a.dow - b.dow) || (a.start < b.start ? -1 : 1));
+    }
+    const map: Record<string, number> = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7 };
+    const arr: AvItem[] = [];
+    for (const k in map) {
+      const d = av[k];
+      if (d?.enabled) arr.push({ dow: map[k], start: d.start?.slice(0, 5), end: d.end?.slice(0, 5) });
+    }
+    return arr
+      .filter((x) => x.start && x.end && x.start < x.end)
+      .sort((a, b) => (a.dow - b.dow) || (a.start < b.start ? -1 : 1));
+  }
+
+  const user = data?.user;
+  const isFriend = Boolean(data?.isFriend);
+  const avail = coerceAvail(data?.availability);
 
   return (
-    <>
-      <div
-        style={{
-          padding: 24,
-          paddingBottom: 96, // alt barda içerik altında kalmasın
-          display: 'grid',
-          gap: 16,
-          gridTemplateColumns: '1fr',
-        }}
-      >
-        {/* başlık + diziliş butonları */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
-          <h2 style={{ margin: 0 }}>Kuşbakışı Saha & Tercihler</h2>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            {(['4-2-3-1', '4-3-3', '3-5-2'] as Formation[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFormation(f)}
-                style={{
-                  borderRadius: 10,
-                  border: '1px solid rgba(255,255,255,.15)',
-                  background: formation === f ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.06)',
-                  color: '#E7FFE7',
-                  fontSize: 13,
-                  padding: '6px 10px',
-                }}
-                title="Dizilişi değiştir"
-              >
-                {f}
-              </button>
-            ))}
-            <a
-              href="#ratings"
-              style={{
-                marginLeft: 8,
-                borderRadius: 10,
-                border: '1px solid rgba(255,255,255,.15)',
-                background: 'rgba(255,255,255,.06)',
-                color: '#E7FFE7',
-                fontSize: 13,
-                padding: '6px 10px',
-                textDecoration: 'none',
-              }}
-              title="Davranış değerlendirmesine git"
-            >
-              ↓ Değerlendir
-            </a>
-          </div>
-        </div>
-
-        {/* üst bölüm: saha + sağda özet */}
-        <div
-          style={{
-            display: 'grid',
-            gap: 16,
-            gridTemplateColumns: 'minmax(300px,560px) minmax(240px,1fr)',
-            alignItems: 'start',
-          }}
-        >
-          {/* Saha */}
-          <div
-            style={{
-              width: '100%',
-              maxWidth: 560,
-              height: 320,
-              background: '#0B7A3B',
-              borderRadius: 12,
-              position: 'relative',
-              border: '4px solid #0a5c2c',
-              overflow: 'hidden',
-            }}
-          >
-            {/* çizgi efekti */}
-            <div
-              style={{
-                position: 'absolute',
-                left: '50%',
-                top: 0,
-                bottom: 0,
-                width: 2,
-                background: 'rgba(255,255,255,.18)',
-                transform: 'translateX(-1px)',
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                top: 8,
-                left: 8,
-                right: 8,
-                bottom: 8,
-                border: '2px solid rgba(255,255,255,.18)',
-                borderRadius: 10,
-              }}
-            />
-
-            {/* rozetler */}
-            {visiblePositions.map((p, i) => {
-              const active = prefs.includes(p);
-              const [top, left] = xy[p] ?? [140, 260 + ((i * 15) % 200)];
-              return (
-                <div
-                  key={p}
-                  style={{
-                    position: 'absolute',
-                    top,
-                    left,
-                    padding: '4px 8px',
-                    borderRadius: 999,
-                    border: '1px solid rgba(255,255,255,.3)',
-                    background: active ? 'rgba(0,0,0,.6)' : 'rgba(0,0,0,.25)',
-                    color: active ? '#A7F3D0' : '#E7FFE7',
-                    fontSize: 12,
-                    userSelect: 'none',
-                  }}
-                  title={active ? 'Tercihlerinden biri' : 'Bilgilendirme'}
-                >
-                  {POS_LABELS[p]} {active ? valueOf(p) : ''}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* sağ özet */}
-          <div
-            style={{
-              border: '1px solid rgba(255,255,255,.1)',
-              background: 'rgba(17,24,39,.6)',
-              borderRadius: 12,
-              padding: 12,
-            }}
-          >
-            <div style={{ opacity: 0.9, marginBottom: 8 }}>
-              <div>
-                Tercihlerim:{' '}
-                <b>
-                  {prefs.length
-                    ? prefs.map((p, i) => `${i + 1}. ${labelOf(p)} • ${valueOf(p)}`).join('   ')
-                    : '—'}
-                </b>
-              </div>
-              <div>
-                Genel seviye: <b>{me.level ?? '—'}</b>
-              </div>
-            </div>
-
-            <div
-              style={{
-                fontSize: 12,
-                opacity: 0.7,
-                lineHeight: 1.5,
-                borderTop: '1px dashed rgba(255,255,255,.12)',
-                paddingTop: 8,
-              }}
-            >
-              <div>• Dizilişi değiştirerek sahadaki yerleşimlerin nasıl değiştiğini görebilirsin.</div>
-              <div>• Etiketlerde yeşil görünenler senin ilk 3 tercihindir.</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Davranış / Rating kartı */}
-        <div id="ratings">
-          <BehaviorRatings
-            targetUserId={me.id ?? myId() ?? 'me'}
-            // defaultValues={{ punctuality: 4, respect: 4, fairplay: 4, profanity: 2, aggression: 2 }}
-            // matchId={new URLSearchParams(location.search).get('matchId') ?? undefined}
-          />
-        </div>
+    <div className="px-4 py-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Link href="/friends" className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
+          ← Arkadaşlar
+        </Link>
+        <Link href="/landing" className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
+          Ana menü
+        </Link>
       </div>
 
-      {/* 🔻 alt tab bar */}
-      <FooterTabs active="player" />
-    </>
+      <div className="mx-auto max-w-3xl rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+        {loading ? (
+          <div className="text-neutral-300">Yükleniyor…</div>
+        ) : error ? (
+          <div className="text-rose-300">{error}</div>
+        ) : !user ? (
+          <div className="text-neutral-300">Kullanıcı bulunamadı.</div>
+        ) : (
+          <>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-lg font-semibold">Oyuncu</div>
+                <div className="text-sm text-neutral-400">ID: {user.id}</div>
+              </div>
+              <div className="rounded-md bg-neutral-800 px-3 py-1 text-sm">
+                Seviye: <span className="font-semibold">{user.level ?? "-"}</span>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="mb-1 text-sm font-medium">Tercih Pozisyonları</div>
+              <div className="flex flex-wrap gap-2">
+                {(Array.isArray(user.positions) ? user.positions : []).map((p: string) => (
+                  <span key={p} className="rounded-full bg-neutral-800 px-3 py-1 text-xs">
+                    {p}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {user.positionLevels && Object.keys(user.positionLevels).length > 0 && (
+              <div className="mb-6">
+                <div className="mb-1 text-sm font-medium">Pozisyon Seviyeleri</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {Object.entries(user.positionLevels).map(([pos, val]: any) => (
+                    <div key={pos} className="rounded-lg border border-white/10 bg-neutral-900 p-2 text-sm">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-medium">{pos}</span>
+                        <span className="text-neutral-300">{val}</span>
+                      </div>
+                      <div className="h-1 w-full rounded bg-neutral-800">
+                        <div className="h-1 rounded bg-white/70" style={{ width: `${(Number(val) ?? 0) * 10}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {user.preferredFormation && (
+              <div className="mb-6 text-sm">
+                Tercih Diziliş: <span className="font-semibold">{user.preferredFormation}</span>
+              </div>
+            )}
+
+            <div>
+              <div className="mb-2 text-sm font-semibold">Müsaitlik</div>
+              {!isFriend ? (
+                <div className="text-xs text-neutral-400">Yalnızca arkadaşlar görebilir.</div>
+              ) : avail.length === 0 ? (
+                <div className="text-xs text-neutral-400">Aralık yok.</div>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {Array.from({ length: 7 }, (_, i) => i + 1).map((d) => {
+                    const list = avail.filter((x) => x.dow === d);
+                    return (
+                      <div key={d} className="rounded-lg border border-white/10 bg-neutral-900 p-2">
+                        <div className="mb-1 text-sm font-medium">{["Pzt","Sal","Çar","Per","Cum","Cmt","Paz"][d-1]}</div>
+                        <div className="text-xs text-neutral-300">
+                          {list.length === 0 ? "—" : list.map((x) => `${x.start}–${x.end}`).join(", ")}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Son 5 Maç W/L/D */}
+            <MatchHistoryPanel userId={id} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===================== SON 5 MAÇ W/L/D PANELİ ===================== */
+function MatchHistoryPanel({ userId }: { userId: string }) {
+  const [matches, setMatches] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/users/${userId}/match-history?limit=5`, {
+          headers: authHeader(),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          if (!cancelled) setMatches(data.matches || []);
+        }
+      } catch (e) {
+        console.error('Failed to fetch match history:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  if (loading) {
+    return (
+      <div className="mt-6">
+        <div className="mb-2 text-sm font-semibold">Son Maçlar</div>
+        <div className="text-xs text-neutral-400">Yükleniyor...</div>
+      </div>
+    );
+  }
+
+  if (matches.length === 0) {
+    return (
+      <div className="mt-6">
+        <div className="mb-2 text-sm font-semibold">Son Maçlar</div>
+        <div className="text-xs text-neutral-400">Henüz tamamlanmış maç yok.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-6">
+      <div className="mb-3 text-sm font-semibold">Son Maçlar</div>
+      
+      {/* Chess.com tarzı W/L/D bar */}
+      <div className="flex items-center gap-1 mb-3">
+        {matches.map((m, i) => (
+          <div
+            key={m.matchId}
+            className="relative group"
+            title={`${m.opponentName} - ${m.result === 'W' ? 'Kazandı' : m.result === 'L' ? 'Kaybetti' : 'Berabere'}`}
+          >
+            {/* W/L/D kutusu */}
+            <div
+              className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold transition
+                ${m.result === 'W' ? 'bg-emerald-600 text-white' : ''}
+                ${m.result === 'L' ? 'bg-red-600 text-white' : ''}
+                ${m.result === 'D' ? 'bg-neutral-500 text-white' : ''}
+              `}
+            >
+              {m.result === 'W' ? '1' : m.result === 'L' ? '0' : '½'}
+            </div>
+            
+            {/* Takım/Seri maçı göstergesi */}
+            <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border border-neutral-900
+              ${m.type === 'TEAM' ? 'bg-rose-500' : 'bg-indigo-500'}
+            `} />
+          </div>
+        ))}
+      </div>
+
+      {/* Özet istatistik */}
+      <div className="flex items-center gap-4 text-xs">
+        <span className="text-emerald-400">
+          {matches.filter(m => m.result === 'W').length}W
+        </span>
+        <span className="text-neutral-400">
+          {matches.filter(m => m.result === 'D').length}D
+        </span>
+        <span className="text-red-400">
+          {matches.filter(m => m.result === 'L').length}L
+        </span>
+      </div>
+
+      {/* Açıklama */}
+      <div className="mt-2 text-[10px] text-neutral-500">
+        <span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1" /> Takım Maçı
+        <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 ml-3 mr-1" /> Seri Maçı
+      </div>
+    </div>
   );
 }

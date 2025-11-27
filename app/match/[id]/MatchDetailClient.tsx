@@ -67,6 +67,7 @@ type MatchDetail = {
   slots: Slot[];
   inviteOnly?: boolean | null;
   createdFrom?: 'TEAM_MATCH' | string | null;
+  seriesId?: string | null;
   access?:
     | {
         owner?: boolean;
@@ -584,6 +585,10 @@ function MatchChat({ matchId }: { matchId: string }) {
         ) : (
           items.map((m) => {
             const isMine = m.userId === myId();
+            // Username varsa göster, yoksa U*** formatı
+            const senderName = isMine 
+              ? 'Siz' 
+              : (m.user?.username || `U${m.user?.phone || '***'}`);
 
             if (editId === m.id && !m.deleted) {
               return (
@@ -595,7 +600,7 @@ function MatchChat({ matchId }: { matchId: string }) {
                           isMine ? 'text-emerald-300' : 'text-zinc-300'
                         }`}
                       >
-                        {isMine ? 'Siz' : 'Oyuncu'}
+                        {senderName}
                       </span>
                       <span className="text-xs text-zinc-500">
                         {new Date(m.createdAt).toLocaleTimeString([], {
@@ -649,7 +654,7 @@ function MatchChat({ matchId }: { matchId: string }) {
                         isMine ? 'text-emerald-300' : 'text-zinc-300'
                       }`}
                     >
-                      {isMine ? 'Siz' : 'Oyuncu'}
+                      {senderName}
                     </span>
                     <span className="text-xs text-zinc-500">
                       {new Date(m.createdAt).toLocaleTimeString([], {
@@ -1862,6 +1867,277 @@ export default function MatchDetailClient({ id }: { id: string }) {
       <RecommendedPanel matchId={m.id} needPos={focusPos} team={focusTeam} />
       <InviteFriendsClient open={inviteOpen} onClose={() => setInviteOpen(false)} matchId={m.id} />
       <MatchChat matchId={m.id} />
+
+      {/* Maç Sonucu Bildirme (Takım ve Seri maçları için) */}
+      {(m.createdFrom === 'TEAM_MATCH' || m.seriesId) && (
+        <MatchReportPanel 
+          matchId={m.id} 
+          matchTime={m.time} 
+          canEdit={!!m?.access?.canEdit}
+          isOwner={isOwner}
+          onReported={refresh}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ===================== MAÇ SONUCU BİLDİRME PANELİ - W/L/D FORMAT ===================== */
+function MatchReportPanel({
+  matchId,
+  matchTime,
+  canEdit,
+  isOwner,
+  onReported,
+}: {
+  matchId: string;
+  matchTime: string | null;
+  canEdit: boolean;
+  isOwner: boolean;
+  onReported: () => void;
+}) {
+  const [reports, setReports] = React.useState<any[]>([]);
+  const [isConsensus, setIsConsensus] = React.useState(false);
+  const [finalResult, setFinalResult] = React.useState<'TEAM_A' | 'TEAM_B' | 'DRAW' | null>(null);
+  const [teamAId, setTeamAId] = React.useState<string | null>(null);
+  const [teamBId, setTeamBId] = React.useState<string | null>(null);
+  const [teamAName, setTeamAName] = React.useState('Takım A');
+  const [teamBName, setTeamBName] = React.useState('Takım B');
+  const [isTeamMatch, setIsTeamMatch] = React.useState(false);
+  const [isSeriesMatch, setIsSeriesMatch] = React.useState(false);
+  
+  const [selectedResult, setSelectedResult] = React.useState<'TEAM_A' | 'TEAM_B' | 'DRAW' | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState('');
+
+  // Maç bitmiş mi?
+  const matchEnded = React.useMemo(() => {
+    if (!matchTime) return false;
+    return new Date(matchTime).getTime() < Date.now();
+  }, [matchTime]);
+
+  // Raporları çek
+  const fetchReports = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/matches/${matchId}/reports`, {
+        headers: authHeader(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReports(data.reports || []);
+        setIsConsensus(data.isConsensus || false);
+        setFinalResult(data.finalResult || null);
+        setTeamAId(data.teamAId);
+        setTeamBId(data.teamBId);
+        setTeamAName(data.teamAName || 'Takım A');
+        setTeamBName(data.teamBName || 'Takım B');
+        setIsTeamMatch(data.isTeamMatch || false);
+        setIsSeriesMatch(data.isSeriesMatch || false);
+      }
+    } catch (e) {
+      console.error('Failed to fetch reports:', e);
+    }
+  }, [matchId]);
+
+  React.useEffect(() => {
+    if (matchEnded) {
+      fetchReports();
+    }
+  }, [matchEnded, fetchReports]);
+
+  // Sonuç bildir
+  const handleSubmit = async (result: 'TEAM_A' | 'TEAM_B' | 'DRAW') => {
+    setSubmitting(true);
+    setError('');
+    setSelectedResult(result);
+    
+    try {
+      const res = await fetch(`${API_URL}/matches/${matchId}/report`, {
+        method: 'POST',
+        headers: {
+          ...authHeader(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ result }),
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.message === 'must_be_team_captain') {
+          setError('Sadece takım kaptanları sonuç bildirebilir.');
+        } else if (data.message === 'match_not_started') {
+          setError('Maç henüz başlamadı.');
+        } else if (data.message === 'only_team_or_series_matches') {
+          setError('Sadece takım ve seri maçlarında sonuç bildirilebilir.');
+        } else {
+          setError('Sonuç bildirilemedi. Tekrar dene.');
+        }
+        return;
+      }
+      
+      const data = await res.json();
+      if (data.consensus) {
+        const eloMsg = isTeamMatch ? ' ve ELO puanları güncellendi' : '';
+        alert(`🎉 Her iki takım aynı sonucu bildirdi! Maç sonucu onaylandı${eloMsg}.`);
+      } else {
+        alert('✅ Sonuç bildirildi. Diğer takımın da aynı sonucu bildirmesi bekleniyor.');
+      }
+      
+      fetchReports();
+      onReported();
+    } catch (e) {
+      setError('Bir hata oluştu.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Maç bitmemişse gösterme
+  if (!matchEnded) {
+    return null;
+  }
+
+  // Kaptan/admin değilse sadece sonuçları göster
+  const canReport = canEdit || isOwner;
+
+  // Result label
+  const resultLabel = (r: 'TEAM_A' | 'TEAM_B' | 'DRAW') => {
+    if (r === 'TEAM_A') return `${teamAName} Kazandı`;
+    if (r === 'TEAM_B') return `${teamBName} Kazandı`;
+    return 'Berabere';
+  };
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-neutral-900/80 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-sm font-semibold">🏆 Maç Sonucu</span>
+        {isTeamMatch && (
+          <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-300 ring-1 ring-rose-500/30">
+            Takım Maçı • ELO
+          </span>
+        )}
+        {isSeriesMatch && !isTeamMatch && (
+          <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] text-indigo-300 ring-1 ring-indigo-500/30">
+            Seri Maçı
+          </span>
+        )}
+      </div>
+
+      {/* Onaylanmış sonuç */}
+      {isConsensus && finalResult && (
+        <div className={`mb-4 rounded-xl p-4 text-center ${
+          finalResult === 'DRAW' 
+            ? 'bg-neutral-700/30 border border-neutral-500/30' 
+            : 'bg-emerald-900/30 border border-emerald-500/30'
+        }`}>
+          <div className="text-xs text-emerald-400 mb-2">✓ Sonuç Onaylandı</div>
+          <div className="text-2xl font-bold text-white">
+            {finalResult === 'TEAM_A' && `🏆 ${teamAName} Kazandı!`}
+            {finalResult === 'TEAM_B' && `🏆 ${teamBName} Kazandı!`}
+            {finalResult === 'DRAW' && '🤝 Berabere'}
+          </div>
+          {isTeamMatch && (
+            <div className="mt-2 text-xs text-neutral-400">
+              ELO puanları güncellendi
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Mevcut raporlar */}
+      {reports.length > 0 && !isConsensus && (
+        <div className="mb-4 space-y-2">
+          <div className="text-xs text-neutral-400">Bildirilen Sonuçlar:</div>
+          {reports.map((r) => (
+            <div key={r.id} className="flex items-center justify-between rounded-lg bg-neutral-800/50 p-2 text-sm">
+              <span className="text-neutral-300">
+                {r.team?.name || (r.teamId === teamAId ? teamAName : teamBName)}
+              </span>
+              <span className={`font-medium px-2 py-0.5 rounded ${
+                r.result === 'TEAM_A' ? 'bg-emerald-500/20 text-emerald-300' :
+                r.result === 'TEAM_B' ? 'bg-rose-500/20 text-rose-300' :
+                'bg-neutral-600/30 text-neutral-300'
+              }`}>
+                {resultLabel(r.result)}
+              </span>
+            </div>
+          ))}
+          {reports.length === 1 && (
+            <div className="text-xs text-amber-400">
+              ⏳ Diğer takımın sonuç bildirmesi bekleniyor...
+            </div>
+          )}
+          {reports.length >= 2 && !isConsensus && (
+            <div className="text-xs text-red-400">
+              ⚠️ Sonuçlar uyuşmuyor! Her iki takım aynı sonucu bildirmelidir.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sonuç bildirme butonları */}
+      {canReport && !isConsensus && (
+        <div className="space-y-3">
+          <div className="text-xs text-neutral-400">
+            {reports.length === 0 
+              ? 'Maç sonucunu seç (diğer takım da aynı sonucu seçerse onaylanır):'
+              : 'Sonucu düzelt:'}
+          </div>
+          
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => handleSubmit('TEAM_A')}
+              disabled={submitting}
+              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${
+                selectedResult === 'TEAM_A' && submitting
+                  ? 'bg-emerald-600 text-black opacity-50'
+                  : 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600 hover:text-black border border-emerald-500/30'
+              }`}
+            >
+              <div className="text-lg">🏆</div>
+              <div className="text-xs mt-1">{teamAName}</div>
+              <div className="text-[10px] opacity-70">Kazandı</div>
+            </button>
+            
+            <button
+              onClick={() => handleSubmit('DRAW')}
+              disabled={submitting}
+              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${
+                selectedResult === 'DRAW' && submitting
+                  ? 'bg-neutral-600 text-white opacity-50'
+                  : 'bg-neutral-700/50 text-neutral-300 hover:bg-neutral-600 border border-neutral-500/30'
+              }`}
+            >
+              <div className="text-lg">🤝</div>
+              <div className="text-xs mt-1">Berabere</div>
+              <div className="text-[10px] opacity-70">&nbsp;</div>
+            </button>
+            
+            <button
+              onClick={() => handleSubmit('TEAM_B')}
+              disabled={submitting}
+              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${
+                selectedResult === 'TEAM_B' && submitting
+                  ? 'bg-rose-600 text-black opacity-50'
+                  : 'bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-black border border-rose-500/30'
+              }`}
+            >
+              <div className="text-lg">🏆</div>
+              <div className="text-xs mt-1">{teamBName}</div>
+              <div className="text-[10px] opacity-70">Kazandı</div>
+            </button>
+          </div>
+
+          {error && <div className="text-xs text-red-400">{error}</div>}
+        </div>
+      )}
+
+      {/* Kaptan değilse bilgi mesajı */}
+      {!canReport && !isConsensus && reports.length === 0 && (
+        <div className="text-sm text-neutral-400">
+          Maç sonucu henüz bildirilmedi. Takım kaptanları sonucu bildirmeli.
+        </div>
+      )}
     </div>
   );
 }

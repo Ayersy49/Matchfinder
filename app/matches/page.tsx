@@ -130,6 +130,7 @@ export default function MatchesPage() {
   // filtreler
   const [level, setLevel] = React.useState<"" | "Kolay" | "Orta" | "Zor">("");
   const [format, setFormat] = React.useState<"" | "5v5" | "6v6" | "7v7" | "8v8" | "9v9" | "10v10" | "11v11">("");
+  const [matchType, setMatchType] = React.useState<"" | "team" | "series" | "classic">("");
   const [futureOnly, setFutureOnly] = React.useState(true);
 
   // Detay cache
@@ -140,6 +141,12 @@ export default function MatchesPage() {
 
   function isTeamMatch(m: MatchLite): boolean {
     return Boolean(m.isTeamMatch || m.createdFrom === "TEAM_MATCH" || ((m as any).teamAId && (m as any).teamBId));
+  }
+  function isSeriesMatch(m: MatchLite): boolean {
+    return Boolean((m as any)?.seriesId);
+  }
+  function isClassicMatch(m: MatchLite): boolean {
+    return !isTeamMatch(m) && !isSeriesMatch(m);
   }
   function isMyTeamMatch(m: MatchLite): boolean {
     const a = (m as any).teamAId as string | undefined;
@@ -213,32 +220,30 @@ export default function MatchesPage() {
       if (futureOnly && m.time && Date.parse(String(m.time)) < now) return false;
       if (level && m.level !== level) return false;
       if (format && m.format !== format) return false;
+      // Maç türü filtresi
+      if (matchType === "team" && !isTeamMatch(m)) return false;
+      if (matchType === "series" && !isSeriesMatch(m)) return false;
+      if (matchType === "classic" && !isClassicMatch(m)) return false;
       return true;
     });
 
-    function score(m: MatchLite): number {
-      const joined = !!myPosFor(m.id);
-      let s = 0;
-      if (isTeamMatch(m)) s += 100;          // takım maçı yüksek öncelik
-      if (isMyTeamMatch(m)) s += 60;         // benim takımlarımın maçı
-      if (joined) s += 35;                   // zaten katıldığım
-      // zamanı yaklaşan biraz daha öne
-      const t = m.time ? Date.parse(String(m.time)) : Number.POSITIVE_INFINITY;
-      if (Number.isFinite(t)) {
-        const hours = Math.max(0, (t - Date.now()) / (1000 * 60 * 60));
-        s += Math.max(0, 24 - Math.min(24, hours)); // 24 saat içindekilere küçük bonus
-      }
-      return s;
-    }
-
+    // Sıralama: Takım maçları > Seri maçları > Klasik maçlar (her grup içinde zamana göre)
     return [...base].sort((a, b) => {
-      const sb = score(b) - score(a);
-      if (sb !== 0) return sb;
+      // Öncelik sırası: Takım maçı (2), Seri maçı (1), Klasik (0)
+      const getPriority = (m: MatchLite) => {
+        if (isTeamMatch(m)) return 2;
+        if (isSeriesMatch(m)) return 1;
+        return 0;
+      };
+      const pa = getPriority(a), pb = getPriority(b);
+      if (pa !== pb) return pb - pa; // Yüksek öncelik önce
+
+      // Aynı öncelikte: zamana göre (en yakın önce)
       const ta = a.time ? Date.parse(String(a.time)) : Number.POSITIVE_INFINITY;
       const tb = b.time ? Date.parse(String(b.time)) : Number.POSITIVE_INFINITY;
       return ta - tb;
     });
-  }, [items, level, format, futureOnly, myTeams, details]);
+  }, [items, level, format, matchType, futureOnly, myTeams, details]);
 
   // ---------- istek yolla ----------
   async function requestAccess(matchId: string, message?: string) {
@@ -408,6 +413,19 @@ export default function MatchesPage() {
       {/* Filtre çubuğu */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-neutral-900/50 p-3">
         <label className="text-xs text-neutral-300">
+          Tür{" "}
+          <select
+            value={matchType}
+            onChange={(e) => setMatchType(e.target.value as any)}
+            className="ml-1 rounded-md bg-neutral-800 px-2 py-1 text-xs outline-none"
+          >
+            <option value="">Hepsi</option>
+            <option value="team">Takım Maçları</option>
+            <option value="series">Seri Maçları</option>
+            <option value="classic">Klasik Maçlar</option>
+          </select>
+        </label>
+        <label className="text-xs text-neutral-300">
           Seviye{" "}
           <select
             value={level}
@@ -446,6 +464,7 @@ export default function MatchesPage() {
             onClick={() => {
               setLevel("");
               setFormat("");
+              setMatchType("");
               setFutureOnly(true);
             }}
             className="rounded-md bg-neutral-800 px-2 py-1 hover:bg-neutral-700"
@@ -476,23 +495,38 @@ export default function MatchesPage() {
           const extra = Math.max(0, missing.length - showMissing.length);
 
           const teamMatch = isTeamMatch(m);
+          const seriesMatch = isSeriesMatch(m);
           const mine = isMyTeamMatch(m);
           const highlight = isHighlightActive(m);
 
           const cardBase =
             "relative rounded-2xl border bg-neutral-900/40 p-4 transition-shadow";
-          const cardStyle = highlight
-            ? "border-red-500/50 shadow-[0_0_0_2px_rgba(239,68,68,.35),0_0_28px_rgba(239,68,68,.35)]"
-            : "border-neutral-800";
-          const pingDot = highlight ? (
+          
+          // Kart stili: Takım maçı = kırmızı, Seri maçı = lacivert, Normal = varsayılan
+          const getCardStyle = () => {
+            if (teamMatch) {
+              return "border-rose-500/50 bg-rose-500/5 shadow-[0_0_0_2px_rgba(244,63,94,.35),0_0_28px_rgba(244,63,94,.25)]";
+            }
+            if (seriesMatch) {
+              return "border-indigo-500/50 bg-indigo-500/5 shadow-[0_0_0_2px_rgba(99,102,241,.35),0_0_28px_rgba(99,102,241,.25)]";
+            }
+            return "border-neutral-800";
+          };
+          
+          const pingDot = teamMatch ? (
             <>
-              <span className="absolute -top-2 -right-2 h-3 w-3 rounded-full bg-red-500/80 animate-ping" />
-              <span className="absolute -top-2 -right-2 h-3 w-3 rounded-full bg-red-400" />
+              <span className="absolute -top-2 -right-2 h-3 w-3 rounded-full bg-rose-500/80 animate-ping" />
+              <span className="absolute -top-2 -right-2 h-3 w-3 rounded-full bg-rose-400" />
+            </>
+          ) : seriesMatch ? (
+            <>
+              <span className="absolute -top-2 -right-2 h-3 w-3 rounded-full bg-indigo-500/80 animate-ping" />
+              <span className="absolute -top-2 -right-2 h-3 w-3 rounded-full bg-indigo-400" />
             </>
           ) : null;
 
           return (
-            <div key={m.id} className={`${cardBase} ${cardStyle}`}>
+            <div key={m.id} className={`${cardBase} ${getCardStyle()}`}>
               {pingDot}
 
               <div className="flex items-center justify-between gap-3">
@@ -500,6 +534,11 @@ export default function MatchesPage() {
                   <div className="truncate text-lg font-medium flex flex-wrap items-center gap-2">
                     <span className="truncate">{m.title ?? "—"}</span>
                     {teamMatch && <Badge tone="red">Takım Maçı</Badge>}
+                    {seriesMatch && !teamMatch && (
+                      <span className="rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide bg-indigo-600/20 text-indigo-300 ring-1 ring-indigo-500/40">
+                        Seri
+                      </span>
+                    )}
                     {mine && <Badge tone="green">Senin takımın</Badge>}
                     {m.inviteOnly ? <Badge>Kilitli</Badge> : null}
                   </div>

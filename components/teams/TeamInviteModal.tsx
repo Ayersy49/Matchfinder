@@ -39,13 +39,13 @@ export default function TeamInviteModal(props: Props) {
     const toPhones = parseList(toPhonesStr);
 
     if (!toUserIds.length && !toPhones.length) {
-      setError("En az bir kullanıcı ID veya telefon numarası gir.");
+      setError("En az bir kullanıcı adı veya telefon numarası gir.");
       return;
     }
 
     try {
       setSending(true);
-      await postTeamInvites(teamId, { toUserIds, toPhones, message: message.trim() || undefined });
+      const result = await postTeamInvites(teamId, { toUserIds, toPhones, message: message.trim() || undefined });
       // temizle
       setToUserIdsStr("");
       setToPhonesStr("");
@@ -82,12 +82,12 @@ export default function TeamInviteModal(props: Props) {
           <form onSubmit={submit} className="space-y-3">
             <div>
               <label className="mb-1 block text-xs text-neutral-300">
-                Kullanıcı ID’leri (virgül veya boşlukla ayır)
+                Kullanıcı adı veya ID (virgül/boşlukla ayır)
               </label>
               <input
                 value={toUserIdsStr}
                 onChange={(e) => setToUserIdsStr(e.target.value)}
-                placeholder="cuid1, cuid2 ..."
+                placeholder="örn: ali_forvet, veli_kaleci..."
                 className="w-full rounded-lg bg-neutral-800 px-3 py-2 text-sm"
               />
             </div>
@@ -99,7 +99,7 @@ export default function TeamInviteModal(props: Props) {
               <input
                 value={toPhonesStr}
                 onChange={(e) => setToPhonesStr(e.target.value)}
-                placeholder="5xx..., 5yy..."
+                placeholder="5551234567, 5559876543..."
                 className="w-full rounded-lg bg-neutral-800 px-3 py-2 text-sm"
               />
             </div>
@@ -139,8 +139,9 @@ export default function TeamInviteModal(props: Props) {
             </div>
 
             <div className="pt-1 text-[11px] text-neutral-400">
-              * Sistem, telefonlara kayıtlı kullanıcı varsa otomatik eşleştirir; yoksa davet
-              telefon numarasına gönderilir. Aktif üyeler zaten listeden filtrelenir.
+              * Kullanıcı adı veya telefon numarası ile davet gönderebilirsin.
+              Sistem kayıtlı kullanıcıları otomatik eşleştirir.
+              Aktif üyeler zaten listeden filtrelenir.
             </div>
           </form>
         </div>

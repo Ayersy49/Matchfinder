@@ -106,8 +106,19 @@ export default function TeamDetail() {
     () => (team?.members || []).find((m: any) => m.userId === me?.id) || null,
     [team?.members, me?.id]
   );
+  
+  // Debug: console'da kontrol et
+  React.useEffect(() => {
+    if (team && me) {
+      console.log('[TeamDetail] myMember:', myMember);
+      console.log('[TeamDetail] me.id:', me.id);
+      console.log('[TeamDetail] team.members:', team.members);
+    }
+  }, [team, me, myMember]);
+
   const isOwner = myMember?.role === "OWNER";
   const isAdmin = isOwner || myMember?.role === "ADMIN";
+  const isMember = !!myMember && myMember.status === "ACTIVE";
 
   const mySlotKey = React.useMemo(() => {
     if (!myUserId) return null;
@@ -129,6 +140,17 @@ export default function TeamDetail() {
 
   const openSlots = React.useMemo(() => {
     return slots.filter((s) => !s.userId).map((s) => s.slotKey);
+  }, [slots]);
+
+  // Kadro doluluk hesabı (saha oyuncuları - bench hariç)
+  const rosterStatus = React.useMemo(() => {
+    const fieldSlots = slots.filter((s) => !isBenchKey(String(s.slotKey)));
+    const filledFieldSlots = fieldSlots.filter((s) => s.userId);
+    const total = fieldSlots.length;
+    const filled = filledFieldSlots.length;
+    const isFull = total > 0 && filled >= total;
+    const pct = total ? Math.round((filled / total) * 100) : 0;
+    return { total, filled, isFull, pct };
   }, [slots]);
 
   React.useEffect(() => {
@@ -254,9 +276,19 @@ export default function TeamDetail() {
             Ana ekrana dön
           </Link>
 
-          <button onClick={createOpponentReq} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">
-            Rakip Ara
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={createOpponentReq} 
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                rosterStatus.isFull 
+                  ? "bg-emerald-600 text-neutral-950 hover:bg-emerald-500 font-medium" 
+                  : "bg-amber-600 text-neutral-950 hover:bg-amber-500"
+              }`}
+              title={rosterStatus.isFull ? "Kadro tam, rakip arayabilirsin" : `Kadro eksik: ${rosterStatus.filled}/${rosterStatus.total} - Yine de ilan açabilirsin`}
+            >
+              {rosterStatus.isFull ? "✓ Rakip Ara" : `⚠ Rakip Ara (${rosterStatus.filled}/${rosterStatus.total})`}
+            </button>
+          </div>
 
           {isAdmin && (
             <>
@@ -405,23 +437,39 @@ export default function TeamDetail() {
 
               const occupied = Boolean(s.userId);
               const mine = occupied && me?.id && s.userId === me.id;
-              const bench = isBenchKey(key);              // <<< YENİ
+              const bench = isBenchKey(key);
 
               const member = occupied ? team.members.find((m:any) => m.userId === s.userId) : null;
-              const label = mine ? "Ben" : occupied ? "U" + ((member?.user?.phone?.slice(-3)) ?? "***") : key;
+              const isCaptain = member?.role === 'OWNER';
+              const isViceCaptain = member?.role === 'ADMIN';
+              
+              // Username varsa göster, yoksa U*** formatı
+              const displayName = mine 
+                ? "Ben" 
+                : occupied 
+                  ? (member?.user?.username || `U${member?.user?.phone?.slice(-3) ?? "***"}`)
+                  : key;
 
               // ortak buton stilleri
               const baseBtn =
                 "absolute -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-xs ring-1";
 
-              // BENCH'i her durumda gri yap (mine olsa da)
+              // BENCH'i her durumda gri yap
+              // Kaptan için altın sarısı, Yrd. Kaptan için mavi
               const stateClass = bench
-                ? "bg-neutral-600/60 text-neutral-200 ring-white/10"       // <<< YENİ (gri, düşük kontrast)
-                : mine
-                  ? "bg-emerald-600 text-neutral-950 ring-emerald-400"     // saha içindeki kendi slotun
-                  : occupied
-                    ? "bg-neutral-700 text-white ring-white/20"            // dolu slot
-                    : "bg-black/70 text-white hover:bg-black/80 ring-white/30"; // boş slot
+                ? "bg-neutral-600/60 text-neutral-200 ring-white/10"
+                : isCaptain
+                  ? "bg-amber-600 text-neutral-950 ring-amber-400 font-bold"
+                  : isViceCaptain
+                    ? "bg-sky-600 text-neutral-950 ring-sky-400 font-bold"
+                    : mine
+                      ? "bg-emerald-600 text-neutral-950 ring-emerald-400"
+                      : occupied
+                        ? "bg-neutral-700 text-white ring-white/20"
+                        : "bg-black/70 text-white hover:bg-black/80 ring-white/30";
+
+              // Rol etiketi
+              const roleTitle = isCaptain ? ' (Kaptan)' : isViceCaptain ? ' (Yrd. Kaptan)' : '';
 
               return (
                 <button
@@ -429,14 +477,26 @@ export default function TeamDetail() {
                   onClick={() => !occupied && placeSelf(key)}
                   title={
                     occupied
-                      ? `${POS_LABEL[key] || key} • Dolu`
+                      ? `${POS_LABEL[key] || key} • ${displayName}${roleTitle}`
                       : `Slota yerleş: ${POS_LABEL[key] || key}`
                   }
-                  className={`${baseBtn} ${stateClass} ${bench ? "opacity-90" : ""}`} // <<< YENİ
+                  className={`${baseBtn} ${stateClass} ${bench ? "opacity-90" : ""}`}
                   style={{ left: `${left}%`, top: `${top}%` }}
                   disabled={occupied && !mine}
                 >
-                  {label}
+                  {/* Kaptan için C badge'i */}
+                  {isCaptain && !bench && (
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-black ring-1 ring-amber-300">
+                      C
+                    </span>
+                  )}
+                  {/* Yardımcı Kaptan için A badge'i */}
+                  {isViceCaptain && !bench && (
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-black ring-1 ring-sky-300">
+                      A
+                    </span>
+                  )}
+                  {displayName}
                 </button>
               );
             })}
@@ -450,46 +510,85 @@ export default function TeamDetail() {
           {mySlotKey ? (
             <div className="mt-2 text-sm text-neutral-300">
               Şu an mevkin: <b>{POS_LABEL[mySlotKey] || mySlotKey}</b>
-              <div className="mt-2">
+              <div className="mt-2 flex gap-2">
                 <button
                   onClick={leaveSlot}
                   disabled={assigning}
                   className="rounded-lg bg-neutral-800 px-3 py-1.5 text-xs hover:bg-neutral-700"
                 >
-                  Slottan Çık.
+                  Slottan Çık
                 </button>
+                {/* Mevki değiştirme dropdown */}
+                {openSlots.length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        (async () => {
+                          setAssigning(true);
+                          try {
+                            await postAssignSlot(teamId, { slotKey: mySlotKey, userId: null });
+                            await postAssignSlot(teamId, { slotKey: e.target.value, userId: myUserId! });
+                            const s = await getTeamSlots(teamId);
+                            setSlots(s);
+                          } catch (err: any) {
+                            alert(err?.message || "Mevki değiştirilemedi");
+                          } finally {
+                            setAssigning(false);
+                          }
+                        })();
+                      }
+                    }}
+                    className="rounded-lg bg-neutral-800 px-2 py-1.5 text-xs"
+                    disabled={assigning}
+                  >
+                    <option value="">Mevki değiştir…</option>
+                    {openSlots.map((k) => (
+                      <option key={k} value={k}>{POS_LABEL[k] || k}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
           ) : (
             <>
-              <div className="mt-2 text-xs text-neutral-400">
-                Boş mevkilerden birini seçip “Yerleştir”e tıkla.
+              {/* Yeni üye için belirgin uyarı */}
+              <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+                <div className="text-sm text-amber-200 font-medium">
+                  ⚠️ Henüz bir mevki seçmedin!
+                </div>
+                <div className="mt-1 text-xs text-amber-200/70">
+                  Aşağıdan boş bir mevki seç veya sahada boş bir slota tıkla.
+                </div>
               </div>
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   onClick={quickPlace}
-                  className="rounded-lg bg-neutral-800 px-3 py-1.5 text-xs hover:bg-neutral-700"
+                  disabled={assigning || openSlots.length === 0}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-neutral-950 hover:bg-emerald-500 disabled:opacity-50"
                 >
-                  Tercihlerime göre yerleştir
+                  🎯 Tercihlerime göre yerleştir
                 </button>
                 <select
                   value={selectedPos}
                   onChange={(e) => setSelectedPos(e.target.value)}
                   className="min-w-[160px] rounded-lg bg-neutral-800 px-3 py-1.5 text-sm"
                 >
-                  {openSlots.map((k) => (
-                    <option key={k} value={k}>
-                      {POS_LABEL[k] || k}
-                    </option>
-                  ))}
+                  {openSlots.length === 0 ? (
+                    <option value="">Boş mevki yok</option>
+                  ) : (
+                    openSlots.map((k) => (
+                      <option key={k} value={k}>{POS_LABEL[k] || k}</option>
+                    ))
+                  )}
                 </select>
 
                 <button
                   onClick={() => selectedPos && placeSelf(selectedPos)}
-                  disabled={!selectedPos || assigning}
+                  disabled={!selectedPos || assigning || openSlots.length === 0}
                   className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-neutral-950 disabled:opacity-50 hover:bg-emerald-500"
                 >
-                  Yerleştir.
+                  Yerleştir
                 </button>
               </div>
             </>
@@ -499,22 +598,42 @@ export default function TeamDetail() {
           <div className="mt-6">
             <div className="mb-2 text-sm font-medium">Üyeler</div>
             <div className="flex flex-wrap gap-2">
-              {(team.members ?? []).map((m: any) => (
-                <span
-                  key={m.userId}
-                  className={[
-                    "rounded-lg px-2 py-1 text-xs",
-                    m.role === "OWNER"
-                      ? "bg-emerald-700/40 text-emerald-200 ring-1 ring-emerald-500/30"
-                      : m.role === "ADMIN"
-                      ? "bg-sky-700/40 text-sky-200 ring-1 ring-sky-500/30"
-                      : "bg-neutral-800 text-neutral-200"
-                  ].join(" ")}
-                  title={m.role}
-                >
-                  U{m.user?.phone?.slice(-3) ?? "***"} · {m.role}
-                </span>
-              ))}
+              {(team.members ?? []).map((m: any) => {
+                const displayName = m.user?.username || `U${m.user?.phone?.slice(-3) ?? "***"}`;
+                // Rol etiketleri
+                const roleLabel = m.role === "OWNER" 
+                  ? "Kaptan" 
+                  : m.role === "ADMIN" 
+                    ? "Yrd. Kaptan" 
+                    : "Oyuncu";
+                
+                return (
+                  <span
+                    key={m.userId}
+                    className={[
+                      "rounded-lg px-2 py-1 text-xs flex items-center gap-1",
+                      m.role === "OWNER"
+                        ? "bg-amber-700/40 text-amber-200 ring-1 ring-amber-500/30"
+                        : m.role === "ADMIN"
+                        ? "bg-sky-700/40 text-sky-200 ring-1 ring-sky-500/30"
+                        : "bg-neutral-800 text-neutral-200"
+                    ].join(" ")}
+                    title={`${displayName} - ${roleLabel}`}
+                  >
+                    {m.role === "OWNER" && (
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-black">
+                        C
+                      </span>
+                    )}
+                    {m.role === "ADMIN" && (
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-black">
+                        A
+                      </span>
+                    )}
+                    {displayName} · {roleLabel}
+                  </span>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -524,12 +643,19 @@ export default function TeamDetail() {
       <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
         <div className="mb-2 text-sm font-medium">Takım Sohbeti</div>
         <div className="mb-2 max-h-60 space-y-1 overflow-y-auto">
-          {messages.map((m) => (
-            <div key={m.id} className="text-sm">
-              <span className="mr-1 text-neutral-400">{m.user?.nickname || "U***"}:</span>
-              {m.text}
-            </div>
-          ))}
+          {messages.map((m) => {
+            const senderName = m.user?.username || `U${m.user?.phone || "***"}`;
+            const isMe = m.user?.id === me?.id;
+            
+            return (
+              <div key={m.id} className={`text-sm ${isMe ? 'text-right' : ''}`}>
+                <span className={`mr-1 font-medium ${isMe ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                  {isMe ? 'Ben' : senderName}:
+                </span>
+                <span className={isMe ? 'text-neutral-200' : ''}>{m.text}</span>
+              </div>
+            );
+          })}
         </div>
         <div className="flex gap-2">
           <input
@@ -537,6 +663,7 @@ export default function TeamDetail() {
             onChange={(e) => setText(e.target.value)}
             placeholder="Mesaj yaz…"
             className="flex-1 rounded-lg bg-neutral-800 px-3 py-2"
+            onKeyDown={(e) => e.key === 'Enter' && send()}
           />
           <button onClick={send} className="rounded-lg bg-emerald-600 px-3 py-2">
             Gönder
