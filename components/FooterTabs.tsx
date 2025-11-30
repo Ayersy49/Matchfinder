@@ -13,16 +13,18 @@ const TABS: Array<{
   label: string;
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 }> = [
-  { key: "matches", label: "Maçlar",   Icon: CalendarDays },
-  { key: "series",  label: "Seriler",  Icon: Rows3 },
-  { key: "teams",   label: "Takımlar", Icon: Shirt },
-  { key: "profile", label: "Profil",   Icon: UserRound },
-  { key: "player",  label: "Oyuncu",   Icon: Shield },
-];
+    { key: "matches", label: "Maçlar", Icon: CalendarDays },
+    { key: "series", label: "Seriler", Icon: Rows3 },
+    { key: "teams", label: "Takımlar", Icon: Shirt },
+    { key: "profile", label: "Profil", Icon: UserRound },
+    { key: "player", label: "Oyuncu", Icon: Shield },
+  ];
 
 const hrefFor = (key: TabKey) => `/landing?tab=${key}`;
 
-export default function FooterTabs() {
+import { Suspense } from "react";
+
+function FooterTabsContent() {
   const sp = useSearchParams();
   const pathname = usePathname();
 
@@ -45,9 +47,8 @@ export default function FooterTabs() {
             <Link
               key={key}
               href={hrefFor(key)}
-              className={`flex flex-col items-center justify-center rounded-xl px-3 py-2 ${
-                active ? "text-emerald-400" : "text-neutral-300 hover:text-white"
-              }`}
+              className={`flex flex-col items-center justify-center rounded-xl px-3 py-2 ${active ? "text-emerald-400" : "text-neutral-300 hover:text-white"
+                }`}
             >
               <Icon className="h-5 w-5" />
               <span className="mt-1 text-xs">{label}</span>
@@ -56,5 +57,13 @@ export default function FooterTabs() {
         })}
       </div>
     </nav>
+  );
+}
+
+export default function FooterTabs() {
+  return (
+    <Suspense fallback={null}>
+      <FooterTabsContent />
+    </Suspense>
   );
 }

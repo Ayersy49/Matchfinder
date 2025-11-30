@@ -11,6 +11,8 @@ import SeriesTab from "@/components/tabs/SeriesTab";
 import FooterTabs from "@/components/FooterTabs";
 import TeamsTab from "@/components/tabs/TeamsTab";
 import LoginScreen from "@/components/auth/LoginScreen";
+import { requestForToken, onMessageListener } from "@/lib/firebase";
+import WarningModal from "@/components/WarningModal";
 
 
 
@@ -711,13 +713,44 @@ const FORMATIONS: Record<string, PitchSlot[]> = {
 };
 
 /* ====================== Sayfa ====================== */
-export default function Page() {
+import { Suspense } from "react";
+
+function LandingContent() {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined" && localStorage.getItem("token")) {
       setAuthed(true);
     }
+
+    // FCM Token Registration
+    const registerToken = async () => {
+      const token = await requestForToken();
+      if (token) {
+        try {
+          await fetch(`${API_URL}/users/me/device-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader() },
+            body: JSON.stringify({ token })
+          });
+          console.log('FCM Token registered:', token);
+        } catch (err) {
+          console.error('Failed to register FCM token', err);
+        }
+      }
+    };
+    registerToken();
+
+    // Listen for foreground messages
+    onMessageListener().then(payload => {
+      console.log('Foreground message:', payload);
+      const title = (payload as any)?.notification?.title;
+      const body = (payload as any)?.notification?.body;
+      if (title) {
+        // Simple alert for now, can be replaced with a toast
+        // alert(`${title}\n${body}`);
+      }
+    });
   }, []);
 
   const [activeTab, setActiveTab] = useState<"matches" | "series" | "teams" | "profile" | "player" | "account">("matches");
@@ -740,9 +773,20 @@ export default function Page() {
       {!authed ? (
         <LoginScreen onSuccess={() => setAuthed(true)} />
       ) : (
-        <MainShell activeTab={activeTab} onTab={setActiveTab} />
+        <>
+          <WarningModal />
+          <MainShell activeTab={activeTab} onTab={setActiveTab} />
+        </>
       )}
     </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="p-6 text-white">Yükleniyor...</div>}>
+      <LandingContent />
+    </Suspense>
   );
 }
 
@@ -897,6 +941,29 @@ function _OldLoginScreen_DISABLED({ onSuccess }: { onSuccess: () => void }) {
 
 /* ---------------------- Ana kabuk ---------------------- */
 
+/* ------------------ Üst Bar: Mesajlar (badge) ------------------ */
+function MessagesBell() {
+  const [count, setCount] = React.useState(0);
+
+  // Şimdilik sadece link, ileride okunmamış mesaj sayısı eklenebilir
+  // const load = ...
+
+  return (
+    <Link
+      href="/messages"
+      className="relative rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+      title="Mesajlar"
+    >
+      Mesajlar
+      {count > 0 && (
+        <span className="absolute -right-2 -top-2 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+          {count}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 function MainShell({
   activeTab,
   onTab,
@@ -916,6 +983,7 @@ function MainShell({
         <div className="flex items-center gap-2">
           <PendingRatingsBell />
           <NotificationsBell />
+          <MessagesBell />
           <FriendsBell />
           <InvitesBell />
           <div className="text-xs text-neutral-400">MVP Demo</div>
@@ -1360,16 +1428,16 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
 
           // Doluluk - Saha ve Yedek ayrımı
           const slotsArr: any[] = Array.isArray((m as any)?.slots) ? (m as any).slots : [];
-          
+
           // Bench slotlarını ayır (SB1, SB2, SB3 veya bench içeren pozisyonlar)
           const isBenchSlot = (s: any) => {
             const key = String(s?.slotKey || s?.pos || '');
             return /^SB\d+$/i.test(key) || key.toLowerCase().includes('bench') || key.toLowerCase().includes('sub');
           };
-          
+
           const fieldSlots = slotsArr.filter(s => !isBenchSlot(s));
           const benchSlots = slotsArr.filter(s => isBenchSlot(s));
-          
+
           // Saha doluluk hesabı
           const fieldTotal = fieldSlots.length || (typeof m.format === "string" ? (() => {
             const n = parseInt(String(m.format).split("v")[0], 10);
@@ -1378,7 +1446,7 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
           const fieldFilled = fieldSlots.filter((s) => s?.userId).length;
           const pct = fieldTotal ? Math.round((fieldFilled / fieldTotal) * 100) : 0;
           const isFull = fieldTotal > 0 && fieldFilled >= fieldTotal;
-          
+
           // Yedek doluluk hesabı
           const benchTotal = benchSlots.length;
           const benchFilled = benchSlots.filter((s) => s?.userId).length;
@@ -1388,7 +1456,7 @@ function MatchesScreen({ activeTab }: { activeTab: string }) {
           const t = m.time ? new Date(m.time).getTime() : 0;
           const ended = t && t < now;
           const within24h = ended && now - t <= 24 * 3600 * 1000;
-          
+
           // Kadro eksik kontrolü: Maç saati geçmiş + kadro tam değil
           const isIncomplete = ended && !isFull;
           // Maç yaklaşıyor uyarısı: 2 saat içinde + kadro tam değil
@@ -1745,28 +1813,70 @@ function ProfileScreen() {
 
         {/* Pozisyona göre seviye slider'ları */}
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {prefs.map((p) => (
-            <div key={p} className="rounded-xl bg-neutral-800 p-3">
-              <div className="mb-1 text-sm">{ALL_POSITIONS.find((x) => x.key === p)?.label} – Seviye</div>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={1}
-                  max={10}
-                  value={positionLevels[p] ?? 7}
-                  onChange={(e) => setPositionLevels((prev) => ({ ...prev, [p]: parseInt(e.target.value) }))}
-                  className="w-full"
-                />
-                <div className="w-8 text-right">{positionLevels[p] ?? 7}</div>
+          {prefs.map((p) => {
+            const isLocked = (me as any)?.posLocked?.includes(p);
+            return (
+              <div key={p} className="rounded-xl bg-neutral-800 p-3">
+                <div className="mb-1 flex items-center justify-between text-sm">
+                  <span>{ALL_POSITIONS.find((x) => x.key === p)?.label} – Seviye</span>
+                  {isLocked && <span className="text-xs text-amber-400" title="Dış değerlendirme aldığı için kilitli">🔒 Kilitli</span>}
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    disabled={isLocked}
+                    value={positionLevels[p] ?? 7}
+                    onChange={(e) => setPositionLevels((prev) => ({ ...prev, [p]: parseInt(e.target.value) }))}
+                    className={`w-full ${isLocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                  />
+                  <div className="w-8 text-right">{positionLevels[p] ?? 7}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Müsaitlik seçimi */}
         <div className="mt-4">
           <AvailabilityEditor />
         </div>
+
+        {/* Maç Arıyorum Toggle */}
+        <div className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-900/10 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-semibold text-emerald-400">Maç Arıyorum</div>
+              <div className="text-xs text-neutral-400">Aktif olduğunda maç davetlerinde en üstte görünürsün.</div>
+            </div>
+            <label className="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                className="peer sr-only"
+                checked={!!me?.isLookingForMatch}
+                onChange={async (e) => {
+                  const val = e.target.checked;
+                  // (me state update logic is complex here due to useMe, so we just call API and refresh)
+                  try {
+                    const res = await fetch(`${API_URL}/users/me`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json', ...authHeader() },
+                      body: JSON.stringify({ isLookingForMatch: val })
+                    });
+                    if (res.ok) {
+                      refresh();
+                    }
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }}
+              />
+              <div className="peer h-6 w-11 rounded-full bg-neutral-700 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-800"></div>
+            </label>
+          </div>
+        </div>
+
         <div className="mt-4">
           <button
             onClick={save}
@@ -2101,11 +2211,209 @@ function PlayerProfile() {
           <li>Değerlendirmeler 24 saat içinde yapılır ve ağırlıklandırılır.</li>
         </ul>
       </section>
+
+      {/* Son 5 Maç W/L/D */}
+      {me?.id && <MatchHistorySection userId={me.id} />}
+
+      {/* Saha Kaşifi */}
+      {me?.id && <PitchExplorerSection userId={me.id} />}
     </div>
   );
 }
 
 /* ---------------------- Yardımcı bileşenler ---------------------- */
+
+/* ---- Son 5 Maç W/L/D Section ---- */
+function MatchHistorySection({ userId }: { userId: string }) {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const [matches, setMatches] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/users/${userId}/match-history?limit=5`, {
+          headers: { ...authHeader() },
+        });
+        if (r.ok) {
+          const data = await r.json();
+          if (!cancelled) setMatches(data.matches || []);
+        }
+      } catch (e) {
+        console.error('Failed to fetch match history:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+      <h3 className="mb-3 text-base font-semibold">⚽ Son Maçlar</h3>
+
+      {loading ? (
+        <div className="text-sm text-neutral-400">Yükleniyor...</div>
+      ) : matches.length === 0 ? (
+        <div className="text-sm text-neutral-500">
+          Henüz tamamlanmış takım/seri maçı bulunmuyor.
+          <p className="mt-1 text-xs text-neutral-600">
+            Takım maçları oynayıp skor bildirdikten sonra burada görünecek.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Chess.com tarzı W/L/D bar */}
+          <div className="flex items-center gap-1 mb-3">
+            {matches.map((m) => (
+              <div
+                key={m.matchId}
+                className="relative group cursor-pointer"
+                title={`${m.opponentName} - ${m.result === 'W' ? 'Kazandı' : m.result === 'L' ? 'Kaybetti' : 'Berabere'}`}
+              >
+                <div
+                  className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold transition
+                    ${m.result === 'W' ? 'bg-emerald-600 text-white' : ''}
+                    ${m.result === 'L' ? 'bg-red-600 text-white' : ''}
+                    ${m.result === 'D' ? 'bg-neutral-500 text-white' : ''}
+                  `}
+                >
+                  {m.result === 'W' ? '1' : m.result === 'L' ? '0' : '½'}
+                </div>
+                <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border border-neutral-900
+                  ${m.type === 'TEAM' ? 'bg-rose-500' : 'bg-indigo-500'}
+                `} />
+              </div>
+            ))}
+          </div>
+
+          {/* Özet istatistik */}
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-emerald-400 font-medium">
+              {matches.filter(m => m.result === 'W').length}W
+            </span>
+            <span className="text-neutral-400">
+              {matches.filter(m => m.result === 'D').length}D
+            </span>
+            <span className="text-red-400 font-medium">
+              {matches.filter(m => m.result === 'L').length}L
+            </span>
+          </div>
+
+          <div className="mt-2 text-[10px] text-neutral-500">
+            <span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1" /> Takım Maçı
+            <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 ml-3 mr-1" /> Seri Maçı
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ---- Saha Kaşifi Section ---- */
+function PitchExplorerSection({ userId }: { userId: string }) {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const [data, setData] = React.useState<{
+    xp: number;
+    level: number;
+    title: string;
+    visitCount: number;
+    uniquePitches: number;
+  } | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/users/${userId}/pitch-explorer`, {
+          headers: { ...authHeader() },
+        });
+        if (r.ok) {
+          const json = await r.json();
+          if (!cancelled) setData(json);
+        }
+      } catch (e) {
+        console.error('Failed to fetch pitch explorer:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  // Level renkleri ve ikonları
+  const levelColors = ['text-neutral-400', 'text-emerald-400', 'text-blue-400', 'text-purple-400', 'text-amber-400'];
+  const levelIcons = ['🌱', '🏘️', '🏙️', '🗺️', '🌍'];
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+      <h3 className="mb-3 text-base font-semibold">🗺️ Saha Kaşifi</h3>
+
+      {loading ? (
+        <div className="text-sm text-neutral-400">Yükleniyor...</div>
+      ) : !data || (data.xp === 0 && data.visitCount === 0) ? (
+        <div className="text-sm text-neutral-500">
+          Henüz saha kaşifliği başlamadı.
+          <p className="mt-1 text-xs text-neutral-600">
+            Kayıtlı sahalarda maç oynadıktan sonra XP kazanmaya başlarsınız.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Başlık ve seviye */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{levelIcons[data.level] || '🗺️'}</span>
+              <div>
+                <div className={`font-semibold ${levelColors[data.level] || 'text-white'}`}>
+                  {data.title}
+                </div>
+                <div className="text-xs text-neutral-400">Seviye {data.level}</div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-lg font-bold text-emerald-400">{data.xp} XP</div>
+            </div>
+          </div>
+
+          {/* XP Progress bar */}
+          <div>
+            <div className="flex justify-between text-xs text-neutral-400 mb-1">
+              <span>Sonraki Seviye</span>
+              <span>{data.xp} / {(data.level + 1) * 100}</span>
+            </div>
+            <div className="h-2 w-full rounded bg-neutral-800 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 transition-all duration-500"
+                style={{ width: `${Math.min(100, (data.xp / ((data.level + 1) * 100)) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* İstatistikler */}
+          <div className="grid grid-cols-2 gap-3 text-center">
+            <div className="rounded-lg bg-neutral-800 p-2">
+              <div className="text-lg font-bold text-white">{data.visitCount}</div>
+              <div className="text-xs text-neutral-400">Toplam Ziyaret</div>
+            </div>
+            <div className="rounded-lg bg-neutral-800 p-2">
+              <div className="text-lg font-bold text-white">{data.uniquePitches}</div>
+              <div className="text-xs text-neutral-400">Farklı Saha</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function Pitch() {
   return (

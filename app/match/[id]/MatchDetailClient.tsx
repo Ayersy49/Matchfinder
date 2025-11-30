@@ -5,6 +5,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { authHeader, clearToken, myId } from '@/lib/auth';
 import InviteFriendsClient from './InviteFriendsClient';
+import PitchInfo from '@/components/PitchInfo';
 import {
   Shield,
   UserPlus,
@@ -68,15 +69,32 @@ type MatchDetail = {
   inviteOnly?: boolean | null;
   createdFrom?: 'TEAM_MATCH' | string | null;
   seriesId?: string | null;
+  // Pitch alanları
+  pitchId?: string | null;
+  customLat?: number | null;
+  customLng?: number | null;
+  customLabel?: string | null;
+  pitch?: {
+    id: string;
+    name: string;
+    city: string;
+    district: string | null;
+    address: string | null;
+    lat: number;
+    lng: number;
+    phone: string | null;
+    verificationLevel: number;
+    sourceType: 'SYSTEM' | 'USER'; // Required to match PitchData
+  } | null;
   access?:
-    | {
-        owner?: boolean;
-        joined?: boolean;
-        canView?: boolean;
-        requestPending?: boolean;
-        canEdit?: boolean; // BE’den gelen bayrak
-      }
-    | null;
+  | {
+    owner?: boolean;
+    joined?: boolean;
+    canView?: boolean;
+    requestPending?: boolean;
+    canEdit?: boolean; // BE’den gelen bayrak
+  }
+  | null;
 };
 
 type ChatItem = {
@@ -87,6 +105,7 @@ type ChatItem = {
   createdAt: string;
   updatedAt: string;
   editedAt: string | null;
+  user?: { username?: string; phone?: string }; // Added user object
 };
 
 /** Önerilen oyuncu tipi */
@@ -301,8 +320,8 @@ function TimeProposalsPanel({
           p.id !== id
             ? p
             : myTeam === 'A'
-            ? { ...p, ackA: true }
-            : { ...p, ackB: true }
+              ? { ...p, ackA: true }
+              : { ...p, ackB: true }
         ),
       );
 
@@ -333,7 +352,7 @@ function TimeProposalsPanel({
       setActing(null);
     }
   }
-  
+
   return (
     <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
       <div className="mb-2 flex items-center justify-between">
@@ -393,11 +412,10 @@ function TimeProposalsPanel({
                   <button
                     disabled={acting === p.id}
                     onClick={() => vote(p.id, 'UP')}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${
-                      p.myVote === 'UP'
-                        ? 'bg-emerald-600/90 text-neutral-900'
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${p.myVote === 'UP'
+                      ? 'bg-emerald-600/90 text-neutral-900'
                       : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
-                    }`}
+                      }`}
                     title="Evet (bu saat uygun)"
                   >
                     <ThumbsUp className="size-3.5" />
@@ -406,11 +424,10 @@ function TimeProposalsPanel({
                   <button
                     disabled={acting === p.id}
                     onClick={() => vote(p.id, 'DOWN')}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${
-                      p.myVote === 'DOWN'
-                        ? 'bg-rose-600/90 text-neutral-900'
-                        : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
-                    }`}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ring-1 ring-white/15 ${p.myVote === 'DOWN'
+                      ? 'bg-rose-600/90 text-neutral-900'
+                      : 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
+                      }`}
                     title="Hayır (uygun değil)"
                   >
                     <ThumbsDown className="size-3.5" />
@@ -468,7 +485,7 @@ function MatchChat({ matchId }: { matchId: string }) {
 
   const fetchMessages = React.useCallback(async () => {
     try {
-      const r = await fetch(`${API_URL}/matches/${matchId}/messages?limit=50`, {  
+      const r = await fetch(`${API_URL}/matches/${matchId}/messages?limit=50`, {
         headers: { ...authHeader() },
         cache: 'no-store',
       });
@@ -586,8 +603,8 @@ function MatchChat({ matchId }: { matchId: string }) {
           items.map((m) => {
             const isMine = m.userId === myId();
             // Username varsa göster, yoksa U*** formatı
-            const senderName = isMine 
-              ? 'Siz' 
+            const senderName = isMine
+              ? 'Siz'
               : (m.user?.username || `U${m.user?.phone || '***'}`);
 
             if (editId === m.id && !m.deleted) {
@@ -595,13 +612,13 @@ function MatchChat({ matchId }: { matchId: string }) {
                 <div key={m.id} className="flex justify-start">
                   <div className="w-full max-w-xl rounded-2xl bg-[#10151c] px-3 py-2 text-left shadow-sm ring-1 ring-white/10">
                     <div className="mb-1 flex items-center gap-2">
-                      <span
-                        className={`text-xs font-medium ${
-                          isMine ? 'text-emerald-300' : 'text-zinc-300'
-                        }`}
+                      <Link
+                        href={`/player/${m.userId}`}
+                        className={`text-xs font-medium hover:underline ${isMine ? 'text-emerald-300' : 'text-zinc-300'
+                          }`}
                       >
                         {senderName}
-                      </span>
+                      </Link>
                       <span className="text-xs text-zinc-500">
                         {new Date(m.createdAt).toLocaleTimeString([], {
                           hour: '2-digit',
@@ -649,13 +666,13 @@ function MatchChat({ matchId }: { matchId: string }) {
               <div key={m.id} className="flex justify-start">
                 <div className="w-full max-w-xl rounded-2xl bg-[#10151c] px-3 py-2 text-left shadow-sm ring-1 ring-white/10">
                   <div className="mb-1 flex items-center gap-2">
-                    <span
-                      className={`text-xs font-medium ${
-                        isMine ? 'text-emerald-300' : 'text-zinc-300'
-                      }`}
+                    <Link
+                      href={`/player/${m.userId}`}
+                      className={`text-xs font-medium hover:underline ${isMine ? 'text-emerald-300' : 'text-zinc-300'
+                        }`}
                     >
                       {senderName}
-                    </span>
+                    </Link>
                     <span className="text-xs text-zinc-500">
                       {new Date(m.createdAt).toLocaleTimeString([], {
                         hour: '2-digit',
@@ -837,7 +854,11 @@ function RecommendedPanel({
                       </div>
                     )}
                   </div>
-                  <div className="truncate text-sm text-neutral-100">{maskPhone(p.phone)}</div>
+                  <div className="truncate text-sm text-neutral-100">
+                    <Link href={`/player/${p.id}`} className="hover:underline">
+                      {maskPhone(p.phone)}
+                    </Link>
+                  </div>
                   {p.positions && p.positions.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {p.positions.slice(0, 4).map((x) => (
@@ -860,11 +881,10 @@ function RecommendedPanel({
                 <button
                   disabled={p.invited || inviting === p.id}
                   onClick={() => invite(p.id)}
-                  className={`shrink-0 rounded-lg px-2 py-1 text-xs ${
-                    p.invited
-                      ? 'bg-neutral-800 text-neutral-300'
-                      : 'bg-emerald-600 text-neutral-900 hover:bg-emerald-500'
-                  } disabled:opacity-60`}
+                  className={`shrink-0 rounded-lg px-2 py-1 text-xs ${p.invited
+                    ? 'bg-neutral-800 text-neutral-300'
+                    : 'bg-emerald-600 text-neutral-900 hover:bg-emerald-500'
+                    } disabled:opacity-60`}
                 >
                   {p.invited ? 'Gönderildi' : inviting === p.id ? 'Gönderiliyor…' : 'Davet et'}
                 </button>
@@ -965,7 +985,11 @@ function AccessRequestsPanel({ matchId }: { matchId: string }) {
               className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0f141b] px-3 py-2"
             >
               <div className="min-w-0">
-                <div className="text-sm text-neutral-100">{maskPhone(it.phone)}</div>
+                <div className="text-sm text-neutral-100">
+                  <Link href={`/player/${it.userId}`} className="hover:underline">
+                    {maskPhone(it.phone)}
+                  </Link>
+                </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
                   {typeof it.level === 'number' ? <span>Seviye {it.level}</span> : null}
                   {Array.isArray(it.positions) && it.positions.length ? (
@@ -1436,9 +1460,8 @@ export default function MatchDetailClient({ id }: { id: string }) {
             <button
               onClick={toggleLock}
               disabled={locking}
-              className={`rounded-xl px-3 py-1.5 text-sm ${
-                m.inviteOnly ? 'bg-rose-700 hover:bg-rose-600' : 'bg-neutral-800 hover:bg-neutral-700'
-              }`}
+              className={`rounded-xl px-3 py-1.5 text-sm ${m.inviteOnly ? 'bg-rose-700 hover:bg-rose-600' : 'bg-neutral-800 hover:bg-neutral-700'
+                }`}
               title="Kilit: Sadece davetle katılım"
             >
               {locking ? '...' : m.inviteOnly ? 'Kilit Aç' : 'Kilit Kapat'}
@@ -1448,7 +1471,17 @@ export default function MatchDetailClient({ id }: { id: string }) {
       </div>
 
       <div className="text-xs text-neutral-300">
-        {m.location || '—'} • {m.format || '—'} • {m.level || '—'}
+        {m.location || '—'}
+        {m.location && (
+          <button
+            onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(m.location!)}`, '_blank')}
+            className="ml-2 inline-flex items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
+            title="Haritada Göster"
+          >
+            <span className="text-emerald-400">📍</span> Yol Tarifi
+          </button>
+        )}
+        {' '}• {m.format || '—'} • {m.level || '—'}
         {m.price != null ? <> • Fiyat: ₺{m.price}</> : null}
         {m.time ? (
           <>
@@ -1458,6 +1491,19 @@ export default function MatchDetailClient({ id }: { id: string }) {
         ) : null}
         <> • ID: {m.id}</>
       </div>
+
+      {/* ============ SAHA BİLGİSİ ============ */}
+      {(m.pitch || m.customLat) && (
+        <PitchInfo
+          pitch={m.pitch}
+          customLocation={m.customLat ? {
+            lat: m.customLat,
+            lng: m.customLng!,
+            label: m.customLabel || 'Özel Konum',
+          } : null}
+          showDistance={true}
+        />
+      )}
 
       {/* Aksiyon barı */}
       <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
@@ -1548,8 +1594,8 @@ export default function MatchDetailClient({ id }: { id: string }) {
               const stateCls = isMine
                 ? 'border-emerald-400 text-emerald-400'
                 : isEmpty
-                ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
-                : 'border-white/10 text-white/40';
+                  ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
+                  : 'border-white/10 text-white/40';
 
               return (
                 <span
@@ -1559,12 +1605,12 @@ export default function MatchDetailClient({ id }: { id: string }) {
                     isMine
                       ? 'Senin pozisyonun'
                       : isEmpty
-                      ? 'Boş — tıkla'
-                      : s.placeholder === 'ADMIN'
-                      ? 'Admin rezervi'
-                      : s.placeholder === 'GUEST'
-                      ? 'Misafir rezervi (+1)'
-                      : 'Dolu'
+                        ? 'Boş — tıkla'
+                        : s.placeholder === 'ADMIN'
+                          ? 'Admin rezervi'
+                          : s.placeholder === 'GUEST'
+                            ? 'Misafir rezervi (+1)'
+                            : 'Dolu'
                   }
                   onClick={() => {
                     if (isEmpty && !mySlot && !busy) joinSpecific('A', s.pos);
@@ -1635,8 +1681,8 @@ export default function MatchDetailClient({ id }: { id: string }) {
               const stateCls = isMine
                 ? 'border-emerald-400 text-emerald-400'
                 : isEmpty
-                ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
-                : 'border-white/10 text-white/40';
+                  ? 'border-white/30 text-white/90 hover:border-white/60 cursor-pointer'
+                  : 'border-white/10 text-white/40';
 
               return (
                 <span
@@ -1646,12 +1692,12 @@ export default function MatchDetailClient({ id }: { id: string }) {
                     isMine
                       ? 'Senin pozisyonun'
                       : isEmpty
-                      ? 'Boş — tıkla'
-                      : s.placeholder === 'ADMIN'
-                      ? 'Admin rezervi'
-                      : s.placeholder === 'GUEST'
-                      ? 'Misafir rezervi (+1)'
-                      : 'Dolu'
+                        ? 'Boş — tıkla'
+                        : s.placeholder === 'ADMIN'
+                          ? 'Admin rezervi'
+                          : s.placeholder === 'GUEST'
+                            ? 'Misafir rezervi (+1)'
+                            : 'Dolu'
                   }
                   onClick={() => {
                     if (isEmpty && !mySlot && !busy) joinSpecific('B', s.pos);
@@ -1836,7 +1882,7 @@ export default function MatchDetailClient({ id }: { id: string }) {
           canCaptainApply={!!m?.access?.canEdit && !isOwner}
           onApplied={refresh}
         />
-      )}  
+      )}
 
       {/* İhtiyaç seçiciler */}
       <div className="flex flex-wrap items-center gap-2">
@@ -1870,9 +1916,9 @@ export default function MatchDetailClient({ id }: { id: string }) {
 
       {/* Maç Sonucu Bildirme (Takım ve Seri maçları için) */}
       {(m.createdFrom === 'TEAM_MATCH' || m.seriesId) && (
-        <MatchReportPanel 
-          matchId={m.id} 
-          matchTime={m.time} 
+        <MatchReportPanel
+          matchId={m.id}
+          matchTime={m.time}
           canEdit={!!m?.access?.canEdit}
           isOwner={isOwner}
           onReported={refresh}
@@ -1905,7 +1951,7 @@ function MatchReportPanel({
   const [teamBName, setTeamBName] = React.useState('Takım B');
   const [isTeamMatch, setIsTeamMatch] = React.useState(false);
   const [isSeriesMatch, setIsSeriesMatch] = React.useState(false);
-  
+
   const [selectedResult, setSelectedResult] = React.useState<'TEAM_A' | 'TEAM_B' | 'DRAW' | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -1950,7 +1996,7 @@ function MatchReportPanel({
     setSubmitting(true);
     setError('');
     setSelectedResult(result);
-    
+
     try {
       const res = await fetch(`${API_URL}/matches/${matchId}/report`, {
         method: 'POST',
@@ -1960,7 +2006,7 @@ function MatchReportPanel({
         },
         body: JSON.stringify({ result }),
       });
-      
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         if (data.message === 'must_be_team_captain') {
@@ -1974,7 +2020,7 @@ function MatchReportPanel({
         }
         return;
       }
-      
+
       const data = await res.json();
       if (data.consensus) {
         const eloMsg = isTeamMatch ? ' ve ELO puanları güncellendi' : '';
@@ -1982,7 +2028,7 @@ function MatchReportPanel({
       } else {
         alert('✅ Sonuç bildirildi. Diğer takımın da aynı sonucu bildirmesi bekleniyor.');
       }
-      
+
       fetchReports();
       onReported();
     } catch (e) {
@@ -2025,11 +2071,10 @@ function MatchReportPanel({
 
       {/* Onaylanmış sonuç */}
       {isConsensus && finalResult && (
-        <div className={`mb-4 rounded-xl p-4 text-center ${
-          finalResult === 'DRAW' 
-            ? 'bg-neutral-700/30 border border-neutral-500/30' 
-            : 'bg-emerald-900/30 border border-emerald-500/30'
-        }`}>
+        <div className={`mb-4 rounded-xl p-4 text-center ${finalResult === 'DRAW'
+          ? 'bg-neutral-700/30 border border-neutral-500/30'
+          : 'bg-emerald-900/30 border border-emerald-500/30'
+          }`}>
           <div className="text-xs text-emerald-400 mb-2">✓ Sonuç Onaylandı</div>
           <div className="text-2xl font-bold text-white">
             {finalResult === 'TEAM_A' && `🏆 ${teamAName} Kazandı!`}
@@ -2053,11 +2098,10 @@ function MatchReportPanel({
               <span className="text-neutral-300">
                 {r.team?.name || (r.teamId === teamAId ? teamAName : teamBName)}
               </span>
-              <span className={`font-medium px-2 py-0.5 rounded ${
-                r.result === 'TEAM_A' ? 'bg-emerald-500/20 text-emerald-300' :
+              <span className={`font-medium px-2 py-0.5 rounded ${r.result === 'TEAM_A' ? 'bg-emerald-500/20 text-emerald-300' :
                 r.result === 'TEAM_B' ? 'bg-rose-500/20 text-rose-300' :
-                'bg-neutral-600/30 text-neutral-300'
-              }`}>
+                  'bg-neutral-600/30 text-neutral-300'
+                }`}>
                 {resultLabel(r.result)}
               </span>
             </div>
@@ -2079,48 +2123,45 @@ function MatchReportPanel({
       {canReport && !isConsensus && (
         <div className="space-y-3">
           <div className="text-xs text-neutral-400">
-            {reports.length === 0 
+            {reports.length === 0
               ? 'Maç sonucunu seç (diğer takım da aynı sonucu seçerse onaylanır):'
               : 'Sonucu düzelt:'}
           </div>
-          
+
           <div className="grid grid-cols-3 gap-2">
             <button
               onClick={() => handleSubmit('TEAM_A')}
               disabled={submitting}
-              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${
-                selectedResult === 'TEAM_A' && submitting
-                  ? 'bg-emerald-600 text-black opacity-50'
-                  : 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600 hover:text-black border border-emerald-500/30'
-              }`}
+              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${selectedResult === 'TEAM_A' && submitting
+                ? 'bg-emerald-600 text-black opacity-50'
+                : 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600 hover:text-black border border-emerald-500/30'
+                }`}
             >
               <div className="text-lg">🏆</div>
               <div className="text-xs mt-1">{teamAName}</div>
               <div className="text-[10px] opacity-70">Kazandı</div>
             </button>
-            
+
             <button
               onClick={() => handleSubmit('DRAW')}
               disabled={submitting}
-              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${
-                selectedResult === 'DRAW' && submitting
-                  ? 'bg-neutral-600 text-white opacity-50'
-                  : 'bg-neutral-700/50 text-neutral-300 hover:bg-neutral-600 border border-neutral-500/30'
-              }`}
+              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${selectedResult === 'DRAW' && submitting
+                ? 'bg-neutral-600 text-white opacity-50'
+                : 'bg-neutral-700/50 text-neutral-300 hover:bg-neutral-600 border border-neutral-500/30'
+                }`}
             >
               <div className="text-lg">🤝</div>
               <div className="text-xs mt-1">Berabere</div>
               <div className="text-[10px] opacity-70">&nbsp;</div>
             </button>
-            
+
             <button
               onClick={() => handleSubmit('TEAM_B')}
               disabled={submitting}
-              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${
-                selectedResult === 'TEAM_B' && submitting
-                  ? 'bg-rose-600 text-black opacity-50'
-                  : 'bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-black border border-rose-500/30'
-              }`}
+              className={`rounded-lg px-3 py-3 text-sm font-medium transition ${selectedResult === 'TEAM_B' && submitting
+                ? 'bg-rose-600 text-black opacity-50'
+                : 'bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-black border border-rose-500/30'
+                }`}
             >
               <div className="text-lg">🏆</div>
               <div className="text-xs mt-1">{teamBName}</div>

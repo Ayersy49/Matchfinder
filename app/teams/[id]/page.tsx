@@ -16,15 +16,16 @@ import {
   postTeamOpen,
   postTeamLeave,
   deleteTeamHard,
+  postTeamTransferOwnership,
 } from "@/lib/api";
 
 import TeamInviteModal from "@/components/teams/TeamInviteModal";
 
 const POS_LABEL: Record<string, string> = {
-  GK:"Kaleci", LB:"Sol Bek", RB:"Sağ Bek", CB1:"Stoper", CB2:"Stoper", CB3:"Stoper",
-  DM:"Ön Libero", DM1:"Defansif Orta", DM2:"Defansif Orta", CM:"Merkez", AM:"Ofansif Ortasaha",
-  LW:"Sol Kanat", RW:"Sağ Kanat", ST:"Forvet", ST1:"Forvet", ST2:"Forvet",
-  LWB:"Sol Kanat Bek", RWB:"Sağ Kanat Bek",
+  GK: "Kaleci", LB: "Sol Bek", RB: "Sağ Bek", CB1: "Stoper", CB2: "Stoper", CB3: "Stoper",
+  DM: "Ön Libero", DM1: "Defansif Orta", DM2: "Defansif Orta", CM: "Merkez", AM: "Ofansif Ortasaha",
+  LW: "Sol Kanat", RW: "Sağ Kanat", ST: "Forvet", ST1: "Forvet", ST2: "Forvet",
+  LWB: "Sol Kanat Bek", RWB: "Sağ Kanat Bek",
 };
 
 // dosyanın üst kısmına (component içinde değil) ekle
@@ -57,7 +58,7 @@ function expandVariants(base: string): string[] {
     case "CB": return ["CB", "CB1", "CB2", "CB3"];
     case "CM": return ["CM", "CM1", "CM2"];
     case "DM": return ["DM", "DM1", "DM2"];
-    default:   return [base];
+    default: return [base];
   }
 }
 function pickSlotForPref(pref: string, open: string[]): string | null {
@@ -66,7 +67,9 @@ function pickSlotForPref(pref: string, open: string[]): string | null {
   return variants.find(k => open.includes(k)) || null;
 }
 
-export default function TeamDetail() {
+import { Suspense } from "react";
+
+function TeamDetailContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const search = useSearchParams();
@@ -106,7 +109,7 @@ export default function TeamDetail() {
     () => (team?.members || []).find((m: any) => m.userId === me?.id) || null,
     [team?.members, me?.id]
   );
-  
+
   // Debug: console'da kontrol et
   React.useEffect(() => {
     if (team && me) {
@@ -210,7 +213,7 @@ export default function TeamDetail() {
       const m = await postTeamChat(teamId, text.trim());
       setMessages((x) => [...x, m]);
       setText("");
-    } catch (e:any) {
+    } catch (e: any) {
       alert(e?.message || "Mesaj gönderilemedi");
     }
   }
@@ -277,13 +280,12 @@ export default function TeamDetail() {
           </Link>
 
           <div className="flex items-center gap-2">
-            <button 
-              onClick={createOpponentReq} 
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                rosterStatus.isFull 
-                  ? "bg-emerald-600 text-neutral-950 hover:bg-emerald-500 font-medium" 
-                  : "bg-amber-600 text-neutral-950 hover:bg-amber-500"
-              }`}
+            <button
+              onClick={createOpponentReq}
+              className={`rounded-lg px-3 py-1.5 text-sm ${rosterStatus.isFull
+                ? "bg-emerald-600 text-neutral-950 hover:bg-emerald-500 font-medium"
+                : "bg-amber-600 text-neutral-950 hover:bg-amber-500"
+                }`}
               title={rosterStatus.isFull ? "Kadro tam, rakip arayabilirsin" : `Kadro eksik: ${rosterStatus.filled}/${rosterStatus.total} - Yine de ilan açabilirsin`}
             >
               {rosterStatus.isFull ? "✓ Rakip Ara" : `⚠ Rakip Ara (${rosterStatus.filled}/${rosterStatus.total})`}
@@ -308,7 +310,7 @@ export default function TeamDetail() {
           {isOwner && (
             team?.discoverable
               ? <button onClick={handleCloseTeam} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Takımı Kapat</button>
-              : <button onClick={handleOpenTeam}  className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Tekrar Aç</button>
+              : <button onClick={handleOpenTeam} className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700">Tekrar Aç</button>
           )}
 
           {isOwner ? (
@@ -367,13 +369,13 @@ export default function TeamDetail() {
                 const res: any = await patchTeam(teamId, payload);
                 if (res?.bench?.length) {
                   const list = res.bench
-                    .map((b: any) => b.phone ? `U${String(b.phone).slice(-3)}` : b.userId.slice(0,4))
+                    .map((b: any) => b.phone ? `U${String(b.phone).slice(-3)}` : b.userId.slice(0, 4))
                     .join(', ');
                   alert(`${res.bench.length} oyuncu yedeğe alındı: ${list}`);
                 }
                 await refreshTeam();
                 setEditing(false);
-              } catch (err:any) {
+              } catch (err: any) {
                 alert(err?.message || "Kaydedilemedi");
               } finally {
                 setSaving(false);
@@ -382,13 +384,13 @@ export default function TeamDetail() {
             className="grid grid-cols-1 gap-3 md:grid-cols-2"
           >
             <input name="name" defaultValue={team?.name || ""} placeholder="Takım adı"
-                   className="rounded-lg bg-neutral-800 px-3 py-2" />
+              className="rounded-lg bg-neutral-800 px-3 py-2" />
             <input name="city" defaultValue={team?.city || ""} placeholder="Şehir"
-                   className="rounded-lg bg-neutral-800 px-3 py-2" />
+              className="rounded-lg bg-neutral-800 px-3 py-2" />
             <input name="district" defaultValue={team?.district || ""} placeholder="İlçe"
-                   className="rounded-lg bg-neutral-800 px-3 py-2" />
+              className="rounded-lg bg-neutral-800 px-3 py-2" />
             <select name="formationCode" defaultValue={team?.formationCode || "4-3-3"}
-                    className="rounded-lg bg-neutral-800 px-3 py-2">
+              className="rounded-lg bg-neutral-800 px-3 py-2">
               <option value="4-3-3">4-3-3</option>
               <option value="3-5-2">3-5-2</option>
               <option value="4-2-3-1">4-2-3-1</option>
@@ -396,18 +398,18 @@ export default function TeamDetail() {
             <select
               name="size"
               defaultValue={String(slots.filter(s => !isBenchKey(String(s.slotKey))).length || 7)}
-                    className="rounded-lg bg-neutral-800 px-3 py-2">
-              {[5,6,7,8,9,10,11].map(n=>(
+              className="rounded-lg bg-neutral-800 px-3 py-2">
+              {[5, 6, 7, 8, 9, 10, 11].map(n => (
                 <option key={n} value={n}>{n}v{n}</option>
               ))}
             </select>
             <select name="visibility" defaultValue={team?.visibility || "PUBLIC"}
-                    className="rounded-lg bg-neutral-800 px-3 py-2">
+              className="rounded-lg bg-neutral-800 px-3 py-2">
               <option value="PUBLIC">Genel</option>
               <option value="PRIVATE">Özel</option>
             </select>
             <textarea name="bio" defaultValue={team?.bio || ""} placeholder="Açıklama"
-                      className="md:col-span-2 rounded-lg bg-neutral-800 px-3 py-2" />
+              className="md:col-span-2 rounded-lg bg-neutral-800 px-3 py-2" />
             <div className="md:col-span-2 flex gap-2">
               <button
                 type="submit"
@@ -416,8 +418,8 @@ export default function TeamDetail() {
               >
                 {saving ? 'Kaydediliyor…' : 'Kaydet'}
               </button>
-              <button type="button" onClick={()=>setEditing(false)}
-                      className="rounded-lg bg-neutral-800 px-3 py-2 text-sm">
+              <button type="button" onClick={() => setEditing(false)}
+                className="rounded-lg bg-neutral-800 px-3 py-2 text-sm">
                 İptal
               </button>
             </div>
@@ -433,20 +435,20 @@ export default function TeamDetail() {
             {slots.map((s) => {
               const key = s.slotKey as string;
               const left = s.x as number;
-              const top  = s.y as number;
+              const top = s.y as number;
 
               const occupied = Boolean(s.userId);
               const mine = occupied && me?.id && s.userId === me.id;
               const bench = isBenchKey(key);
 
-              const member = occupied ? team.members.find((m:any) => m.userId === s.userId) : null;
+              const member = occupied ? team.members.find((m: any) => m.userId === s.userId) : null;
               const isCaptain = member?.role === 'OWNER';
               const isViceCaptain = member?.role === 'ADMIN';
-              
+
               // Username varsa göster, yoksa U*** formatı
-              const displayName = mine 
-                ? "Ben" 
-                : occupied 
+              const displayName = mine
+                ? "Ben"
+                : occupied
                   ? (member?.user?.username || `U${member?.user?.phone?.slice(-3) ?? "***"}`)
                   : key;
 
@@ -601,12 +603,12 @@ export default function TeamDetail() {
               {(team.members ?? []).map((m: any) => {
                 const displayName = m.user?.username || `U${m.user?.phone?.slice(-3) ?? "***"}`;
                 // Rol etiketleri
-                const roleLabel = m.role === "OWNER" 
-                  ? "Kaptan" 
-                  : m.role === "ADMIN" 
-                    ? "Yrd. Kaptan" 
+                const roleLabel = m.role === "OWNER"
+                  ? "Kaptan"
+                  : m.role === "ADMIN"
+                    ? "Yrd. Kaptan"
                     : "Oyuncu";
-                
+
                 return (
                   <span
                     key={m.userId}
@@ -615,8 +617,8 @@ export default function TeamDetail() {
                       m.role === "OWNER"
                         ? "bg-amber-700/40 text-amber-200 ring-1 ring-amber-500/30"
                         : m.role === "ADMIN"
-                        ? "bg-sky-700/40 text-sky-200 ring-1 ring-sky-500/30"
-                        : "bg-neutral-800 text-neutral-200"
+                          ? "bg-sky-700/40 text-sky-200 ring-1 ring-sky-500/30"
+                          : "bg-neutral-800 text-neutral-200"
                     ].join(" ")}
                     title={`${displayName} - ${roleLabel}`}
                   >
@@ -631,6 +633,28 @@ export default function TeamDetail() {
                       </span>
                     )}
                     {displayName} · {roleLabel}
+
+                    {/* Kaptanlığı Devret Butonu - HMR Trigger */}
+                    {isOwner && m.userId !== me?.id && (
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (confirm(`${displayName} adlı üyeye kaptanlığı devretmek istediğine emin misin? Bu işlem geri alınamaz.`)) {
+                            try {
+                              await postTeamTransferOwnership(teamId, m.userId);
+                              alert("Kaptanlık devredildi.");
+                              await refreshTeam();
+                            } catch (err: any) {
+                              alert(err?.message || "Devredilemedi");
+                            }
+                          }
+                        }}
+                        className="ml-1 rounded bg-amber-600/20 px-1.5 py-0.5 text-[10px] text-amber-200 hover:bg-amber-600/40"
+                        title="Kaptanlığı Devret"
+                      >
+                        Devret
+                      </button>
+                    )}
                   </span>
                 );
               })}
@@ -646,7 +670,7 @@ export default function TeamDetail() {
           {messages.map((m) => {
             const senderName = m.user?.username || `U${m.user?.phone || "***"}`;
             const isMe = m.user?.id === me?.id;
-            
+
             return (
               <div key={m.id} className={`text-sm ${isMe ? 'text-right' : ''}`}>
                 <span className={`mr-1 font-medium ${isMe ? 'text-emerald-400' : 'text-neutral-400'}`}>
@@ -671,6 +695,14 @@ export default function TeamDetail() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function TeamDetail() {
+  return (
+    <Suspense fallback={<div className="p-6 text-white">Yükleniyor...</div>}>
+      <TeamDetailContent />
+    </Suspense>
   );
 }
 

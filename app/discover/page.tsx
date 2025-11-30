@@ -20,14 +20,16 @@ type Player = {
   distanceKm: number;
 };
 
-export default function DiscoverPage() {
+import { Suspense } from 'react';
+
+function DiscoverContent() {
   const params = useSearchParams();
   const presetMatchId = params.get('matchId') ?? undefined;
 
   // isteğe bağlı filtre parametreleri
   const whenISO = params.get('for') ?? undefined;
   const dowQ = params.get('dow') ?? undefined;
-  const atQ  = params.get('at')  ?? undefined;
+  const atQ = params.get('at') ?? undefined;
   const posQ = params.get('pos') ?? undefined;
 
   const [lat, setLat] = React.useState<number | null>(null);
@@ -54,7 +56,7 @@ export default function DiscoverPage() {
         const me = await r.json().catch(() => ({}));
         if (typeof me?.discoverable === 'boolean') {
           setDiscoverable(!!me.discoverable);
-          try { localStorage.setItem(LS_DISCOVER, String(!!me.discoverable)); } catch {}
+          try { localStorage.setItem(LS_DISCOVER, String(!!me.discoverable)); } catch { }
         }
         if (typeof me?.lat === 'number') setLat(me.lat);
         if (typeof me?.lng === 'number') setLng(me.lng);
@@ -78,9 +80,9 @@ export default function DiscoverPage() {
             credentials: 'include',
             body: JSON.stringify({ lat: la, lng: ln }),
           });
-        } catch {}
+        } catch { }
       },
-      () => {},
+      () => { },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }, []);
@@ -101,7 +103,7 @@ export default function DiscoverPage() {
         throw new Error();
       }
       setDiscoverable(next);
-      try { localStorage.setItem(LS_DISCOVER, String(next)); } catch {}
+      try { localStorage.setItem(LS_DISCOVER, String(next)); } catch { }
     } catch {
       alert('Keşifte görünürlük güncellenemedi.');
     }
@@ -119,9 +121,9 @@ export default function DiscoverPage() {
       }
       qs.set('radiusKm', String(radius));
       if (whenISO) qs.set('for', whenISO);
-      if (dowQ)   qs.set('dow', dowQ);
-      if (atQ)    qs.set('at',  atQ);
-      if (posQ)   qs.set('pos', posQ);
+      if (dowQ) qs.set('dow', dowQ);
+      if (atQ) qs.set('at', atQ);
+      if (posQ) qs.set('pos', posQ);
 
       const r = await fetch(`${API_URL}${DISCOVER_ENDPOINT}?${qs.toString()}`, {
         headers: authHeader(),             // spread yok
@@ -194,11 +196,10 @@ export default function DiscoverPage() {
             <span className="text-sm text-neutral-400">Keşifte görün</span>
             <button
               onClick={toggleDiscoverable}
-              className={`rounded-md px-2 py-1 text-xs ring-1 ${
-                discoverable
+              className={`rounded-md px-2 py-1 text-xs ring-1 ${discoverable
                   ? 'bg-emerald-500/20 text-emerald-300 ring-emerald-500/30'
                   : 'bg-neutral-800 text-neutral-300 ring-white/10'
-              }`}
+                }`}
             >
               {discoverable ? 'Açık' : 'Kapalı'}
             </button>
@@ -269,5 +270,13 @@ export default function DiscoverPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DiscoverPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-white">Yükleniyor...</div>}>
+      <DiscoverContent />
+    </Suspense>
   );
 }

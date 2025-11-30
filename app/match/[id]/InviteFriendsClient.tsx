@@ -2,6 +2,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { authHeader } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
@@ -9,6 +10,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 type FriendRow = {
   id: string;
   phone: string | null;
+  isLookingForMatch?: boolean;
 };
 
 type SuggestedRow = {
@@ -17,6 +19,7 @@ type SuggestedRow = {
   distanceKm?: number;
   level?: number | null;
   positions?: string[] | null;
+  isLookingForMatch?: boolean;
 };
 
 type Props = {
@@ -73,6 +76,7 @@ export default function InviteFriendsClient({ open, onClose, matchId }: Props) {
       const rows: FriendRow[] = items.map((x: any) => ({
         id: String(x?.friendId || x?.id),
         phone: x?.friend?.phone ?? x?.phone ?? null,
+        isLookingForMatch: !!x?.isLookingForMatch,
       }));
       setFriends(rows);
     } catch {
@@ -85,7 +89,7 @@ export default function InviteFriendsClient({ open, onClose, matchId }: Props) {
   async function loadSuggested() {
     try {
       setSugLoading(true);
-      const r = await fetch(`${API_URL}/matches/${matchId}/recommend?limit=20`, {
+      const r = await fetch(`${API_URL}/matches/${matchId}/recommend-invites?limit=20`, {
         headers: { ...authHeader() },
         cache: "no-store",
       });
@@ -97,6 +101,7 @@ export default function InviteFriendsClient({ open, onClose, matchId }: Props) {
         distanceKm: typeof x?.distanceKm === "number" ? x.distanceKm : undefined,
         level: typeof x?.level === "number" ? x.level : null,
         positions: Array.isArray(x?.positions) ? x.positions.map(String) : null,
+        isLookingForMatch: !!x?.isLookingForMatch,
       }));
       setSuggested(rows);
     } catch {
@@ -209,25 +214,22 @@ export default function InviteFriendsClient({ open, onClose, matchId }: Props) {
         <div className="mb-3 flex gap-2">
           <button
             onClick={() => setTab("FRIENDS")}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
-              tab === "FRIENDS" ? "bg-white/10" : "bg-neutral-800 hover:bg-neutral-700"
-            }`}
+            className={`rounded-lg px-3 py-1.5 text-sm ${tab === "FRIENDS" ? "bg-white/10" : "bg-neutral-800 hover:bg-neutral-700"
+              }`}
           >
             Arkadaşlarım
           </button>
           <button
             onClick={() => setTab("SUGGESTED")}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
-              tab === "SUGGESTED" ? "bg-white/10" : "bg-neutral-800 hover:bg-neutral-700"
-            }`}
+            className={`rounded-lg px-3 py-1.5 text-sm ${tab === "SUGGESTED" ? "bg-white/10" : "bg-neutral-800 hover:bg-neutral-700"
+              }`}
           >
             Önerilenler
           </button>
           <button
             onClick={() => setTab("PHONE")}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
-              tab === "PHONE" ? "bg-white/10" : "bg-neutral-800 hover:bg-neutral-700"
-            }`}
+            className={`rounded-lg px-3 py-1.5 text-sm ${tab === "PHONE" ? "bg-white/10" : "bg-neutral-800 hover:bg-neutral-700"
+              }`}
           >
             Telefonla
           </button>
@@ -257,7 +259,17 @@ export default function InviteFriendsClient({ open, onClose, matchId }: Props) {
                   return (
                     <li key={f.id} className="flex items-center justify-between gap-3 p-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-medium">Kullanıcı</div>
+                        <div className="flex items-center gap-2">
+                          <Link href={`/player/${f.id}`} target="_blank" className="text-sm font-medium hover:underline">
+                            Kullanıcı
+                          </Link>
+                          {f.isLookingForMatch && (
+                            <span className="relative flex h-3 w-3">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-neutral-400">{f.phone || "—"}</div>
                       </div>
                       <label className="flex items-center gap-2 text-sm">
@@ -290,8 +302,16 @@ export default function InviteFriendsClient({ open, onClose, matchId }: Props) {
                   return (
                     <li key={p.id} className="flex items-center justify-between gap-3 p-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-medium">
-                          Oyuncu {p.phone ? `• ${p.phone}` : ""}
+                        <div className="flex items-center gap-2">
+                          <Link href={`/player/${p.id}`} target="_blank" className="text-sm font-medium hover:underline">
+                            Oyuncu {p.phone ? `• ${p.phone}` : ""}
+                          </Link>
+                          {p.isLookingForMatch && (
+                            <span className="relative flex h-3 w-3">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                            </span>
+                          )}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-neutral-400">
                           {typeof p.distanceKm === "number" && (

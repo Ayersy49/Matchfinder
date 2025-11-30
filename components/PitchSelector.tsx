@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { MapPin, Phone, Search, Star, Check, X, Navigation } from "lucide-react";
+import { MapPin, Phone, Search, Star, Check, X, Navigation, ChevronDown } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -39,32 +39,52 @@ type Props = {
   initialCity?: string;
 };
 
+// Türkiye'nin büyük şehirleri (API'den veri gelmezse fallback)
+const TURKEY_CITIES = [
+  "İstanbul", "Ankara", "İzmir", "Bursa", "Antalya", 
+  "Adana", "Konya", "Gaziantep", "Mersin", "Kayseri",
+  "Eskişehir", "Samsun", "Denizli", "Sakarya", "Kocaeli"
+];
+
 export default function PitchSelector({ open, onClose, onSelect, initialCity }: Props) {
   const [mode, setMode] = React.useState<'list' | 'custom'>('list');
   const [cities, setCities] = React.useState<{ name: string; count: number }[]>([]);
   const [selectedCity, setSelectedCity] = React.useState(initialCity || '');
   const [pitches, setPitches] = React.useState<Pitch[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [loadingCities, setLoadingCities] = React.useState(true);
   const [search, setSearch] = React.useState('');
   const [userLocation, setUserLocation] = React.useState<{ lat: number; lng: number } | null>(null);
+  const [cityDropdownOpen, setCityDropdownOpen] = React.useState(false);
 
-  // Custom location state
-  const [customLat, setCustomLat] = React.useState('');
-  const [customLng, setCustomLng] = React.useState('');
-  const [customLabel, setCustomLabel] = React.useState('');
+  // Custom location state - basitleştirilmiş
+  const [customName, setCustomName] = React.useState('');
+  const [customDistrict, setCustomDistrict] = React.useState('');
+  const [customCity, setCustomCity] = React.useState('');
 
   // Şehirleri yükle
   React.useEffect(() => {
     if (!open) return;
+    setLoadingCities(true);
     (async () => {
       try {
-        const res = await fetch(`${API_URL}/pitches/cities`);
+        const res = await fetch(`${API_URL}/pitches/cities`, { headers: authHeader() });
         if (res.ok) {
           const data = await res.json();
-          setCities(data.cities || []);
+          if (data.cities && data.cities.length > 0) {
+            setCities(data.cities);
+          } else {
+            // API'den veri gelmediyse fallback kullan
+            setCities(TURKEY_CITIES.map(c => ({ name: c, count: 0 })));
+          }
+        } else {
+          setCities(TURKEY_CITIES.map(c => ({ name: c, count: 0 })));
         }
       } catch (e) {
         console.error('Failed to load cities:', e);
+        setCities(TURKEY_CITIES.map(c => ({ name: c, count: 0 })));
+      } finally {
+        setLoadingCities(false);
       }
     })();
   }, [open]);
@@ -85,7 +105,10 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
 
   // Sahaları yükle
   React.useEffect(() => {
-    if (!open || !selectedCity) return;
+    if (!open || !selectedCity) {
+      setPitches([]);
+      return;
+    }
     setLoading(true);
     (async () => {
       try {
@@ -96,7 +119,7 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
         if (search) {
           url += `&search=${encodeURIComponent(search)}`;
         }
-        const res = await fetch(url);
+        const res = await fetch(url, { headers: authHeader() });
         if (res.ok) {
           const data = await res.json();
           setPitches(data.pitches || []);
@@ -138,22 +161,33 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
   };
 
   const handleCustomLocation = () => {
-    const lat = parseFloat(customLat);
-    const lng = parseFloat(customLng);
-    if (isNaN(lat) || isNaN(lng) || !customLabel.trim()) {
-      alert('Lütfen geçerli koordinatlar ve bir isim girin.');
+    if (!customName.trim()) {
+      alert('Lütfen saha adını girin.');
       return;
     }
-    onSelect(null, { lat, lng, label: customLabel.trim() });
+    
+    // Koordinat olmadan, sadece label oluştur
+    // Harita gösterimi olmayacak ama maç kaydedilebilir
+    const label = [customName.trim(), customDistrict.trim(), customCity.trim()]
+      .filter(Boolean)
+      .join(', ');
+    
+    // Default olarak Türkiye merkezi (harita gösterilmeyecek zaten)
+    onSelect(null, { lat: 39.9334, lng: 32.8597, label });
     onClose();
   };
 
-  const handleUseCurrentLocation = () => {
-    if (userLocation) {
-      setCustomLat(userLocation.lat.toFixed(6));
-      setCustomLng(userLocation.lng.toFixed(6));
+  // Modal kapatıldığında state'leri sıfırla
+  React.useEffect(() => {
+    if (!open) {
+      setSelectedCity('');
+      setSearch('');
+      setCustomName('');
+      setCustomDistrict('');
+      setCustomCity('');
+      setCityDropdownOpen(false);
     }
-  };
+  }, [open]);
 
   if (!open) return null;
 
@@ -177,7 +211,7 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
             }`}
           >
             <MapPin className="mr-2 inline h-4 w-4" />
-            Doğrulanmış Sahalar
+            Kayıtlı Sahalar
           </button>
           <button
             onClick={() => setMode('custom')}
@@ -186,58 +220,85 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
             }`}
           >
             <Navigation className="mr-2 inline h-4 w-4" />
-            Özel Konum
+            Manuel Giriş
           </button>
         </div>
 
         {/* Content */}
-        <div className="max-h-[60vh] overflow-y-auto p-4">
+        <div className="p-4">
           {mode === 'list' ? (
             <>
-              {/* City Selection */}
-              {!selectedCity ? (
-                <div className="space-y-2">
-                  <p className="mb-3 text-sm text-neutral-400">Şehir seçin:</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {cities.map((c) => (
-                      <button
-                        key={c.name}
-                        onClick={() => setSelectedCity(c.name)}
-                        className="flex items-center justify-between rounded-lg border border-white/10 bg-neutral-800 p-3 text-left hover:border-emerald-500/50"
-                      >
-                        <span className="font-medium">{c.name}</span>
-                        <span className="text-xs text-neutral-500">{c.count} saha</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {/* Back + Search */}
-                  <div className="mb-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setSelectedCity('')}
-                      className="rounded-lg bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
-                    >
-                      ← Geri
-                    </button>
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                      <input
-                        type="text"
-                        placeholder="Saha ara..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="w-full rounded-lg border border-white/10 bg-neutral-800 py-2 pl-9 pr-3 text-sm"
-                      />
+              {/* City Selection Dropdown */}
+              <div className="mb-4">
+                <label className="mb-2 block text-sm text-neutral-400">Şehir seçin:</label>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setCityDropdownOpen(!cityDropdownOpen)}
+                    className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-neutral-800 px-4 py-3 text-left hover:border-white/20"
+                  >
+                    <span className={selectedCity ? 'text-white' : 'text-neutral-500'}>
+                      {selectedCity || 'Şehir seçin...'}
+                    </span>
+                    <ChevronDown className={`h-5 w-5 text-neutral-400 transition ${cityDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* Dropdown Menu */}
+                  {cityDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-lg border border-white/10 bg-neutral-800 shadow-xl">
+                      {loadingCities ? (
+                        <div className="p-4 text-center text-neutral-400">Yükleniyor...</div>
+                      ) : cities.length === 0 ? (
+                        <div className="p-4 text-center text-neutral-400">Şehir bulunamadı</div>
+                      ) : (
+                        cities.map((c) => (
+                          <button
+                            key={c.name}
+                            onClick={() => {
+                              setSelectedCity(c.name);
+                              setCityDropdownOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between px-4 py-3 text-left hover:bg-neutral-700 ${
+                              selectedCity === c.name ? 'bg-emerald-500/20 text-emerald-400' : ''
+                            }`}
+                          >
+                            <span>{c.name}</span>
+                            {c.count > 0 && (
+                              <span className="text-xs text-neutral-500">{c.count} saha</span>
+                            )}
+                          </button>
+                        ))
+                      )}
                     </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Search & Pitch List (only if city selected) */}
+              {selectedCity && (
+                <div className="max-h-[40vh] overflow-y-auto">
+                  {/* Search */}
+                  <div className="relative mb-3 sticky top-0 bg-neutral-900 pb-2">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                    <input
+                      type="text"
+                      placeholder="Saha ara..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="w-full rounded-lg border border-white/10 bg-neutral-800 py-2 pl-9 pr-3 text-sm"
+                    />
                   </div>
 
                   {/* Pitch List */}
                   {loading ? (
                     <div className="py-8 text-center text-neutral-400">Yükleniyor...</div>
                   ) : pitches.length === 0 ? (
-                    <div className="py-8 text-center text-neutral-400">Saha bulunamadı</div>
+                    <div className="py-8 text-center">
+                      <p className="text-neutral-400">Bu şehirde kayıtlı saha bulunamadı.</p>
+                      <p className="mt-2 text-sm text-neutral-500">
+                        "Manuel Giriş" sekmesinden saha bilgilerini girebilirsiniz.
+                      </p>
+                    </div>
                   ) : (
                     <div className="space-y-2">
                       {pitches.map((p) => (
@@ -262,7 +323,7 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
                             <div className="text-right">
                               {p.distanceKm !== undefined && (
                                 <div className="text-sm font-medium text-emerald-400">
-                                  {p.distanceKm} km
+                                  {p.distanceKm.toFixed(1)} km
                                 </div>
                               )}
                               {p.phone && (
@@ -277,66 +338,64 @@ export default function PitchSelector({ open, onClose, onSelect, initialCity }: 
                       ))}
                     </div>
                   )}
-                </>
+                </div>
+              )}
+
+              {/* Hint when no city selected */}
+              {!selectedCity && !loadingCities && (
+                <div className="py-4 text-center text-sm text-neutral-500">
+                  Sahaları görmek için yukarıdan şehir seçin
+                </div>
               )}
             </>
           ) : (
-            /* Custom Location Mode */
+            /* Custom Location Mode - Sadeleştirilmiş */
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-                ⚠️ Özel konum global saha listesine eklenmez, sadece bu maç için kullanılır.
+                ⚠️ Manuel girilen konum sadece bu maç için geçerlidir.
               </div>
 
               <div>
-                <label className="mb-1 block text-sm text-neutral-400">Konum Adı</label>
+                <label className="mb-1 block text-sm text-neutral-400">
+                  Saha Adı <span className="text-red-400">*</span>
+                </label>
                 <input
                   type="text"
-                  placeholder="örn: Okul Bahçesi, Park Sahası..."
-                  value={customLabel}
-                  onChange={(e) => setCustomLabel(e.target.value)}
-                  className="w-full rounded-lg border border-white/10 bg-neutral-800 px-3 py-2"
+                  placeholder="örn: Yıldız Halı Saha"
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  className="w-full rounded-lg border border-white/10 bg-neutral-800 px-3 py-3"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-sm text-neutral-400">Enlem (Lat)</label>
-                  <input
-                    type="text"
-                    placeholder="41.0082"
-                    value={customLat}
-                    onChange={(e) => setCustomLat(e.target.value)}
-                    className="w-full rounded-lg border border-white/10 bg-neutral-800 px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm text-neutral-400">Boylam (Lng)</label>
-                  <input
-                    type="text"
-                    placeholder="28.9784"
-                    value={customLng}
-                    onChange={(e) => setCustomLng(e.target.value)}
-                    className="w-full rounded-lg border border-white/10 bg-neutral-800 px-3 py-2"
-                  />
-                </div>
+              <div>
+                <label className="mb-1 block text-sm text-neutral-400">İlçe</label>
+                <input
+                  type="text"
+                  placeholder="örn: Kadıköy"
+                  value={customDistrict}
+                  onChange={(e) => setCustomDistrict(e.target.value)}
+                  className="w-full rounded-lg border border-white/10 bg-neutral-800 px-3 py-3"
+                />
               </div>
 
-              {userLocation && (
-                <button
-                  onClick={handleUseCurrentLocation}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-neutral-800 py-2 text-sm hover:bg-neutral-700"
-                >
-                  <Navigation className="h-4 w-4" />
-                  Mevcut Konumumu Kullan
-                </button>
-              )}
+              <div>
+                <label className="mb-1 block text-sm text-neutral-400">Şehir</label>
+                <input
+                  type="text"
+                  placeholder="örn: İstanbul"
+                  value={customCity}
+                  onChange={(e) => setCustomCity(e.target.value)}
+                  className="w-full rounded-lg border border-white/10 bg-neutral-800 px-3 py-3"
+                />
+              </div>
 
               <button
                 onClick={handleCustomLocation}
-                disabled={!customLabel.trim() || !customLat || !customLng}
-                className="w-full rounded-lg bg-amber-600 py-3 font-medium text-black hover:bg-amber-500 disabled:opacity-50"
+                disabled={!customName.trim()}
+                className="w-full rounded-lg bg-amber-600 py-3 font-medium text-black hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Bu Konumu Seç
+                Bu Sahayı Kullan
               </button>
             </div>
           )}

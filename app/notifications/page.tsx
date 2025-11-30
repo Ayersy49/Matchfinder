@@ -10,7 +10,7 @@ import {
   CheckCircle2,
   Star,
   ChevronRight,
-  XCircle,            
+  XCircle,
 } from "lucide-react";
 
 
@@ -110,7 +110,9 @@ function groupByDay(items: NotificationRow[]) {
   });
 }
 
-export default function NotificationsPage() {
+import { Suspense } from "react";
+
+function NotificationsContent() {
   const [items, setItems] = React.useState<NotificationRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [unreadOnly, setUnreadOnly] = React.useState(false);
@@ -176,11 +178,10 @@ export default function NotificationsPage() {
 
           <button
             onClick={() => setUnreadOnly((v) => !v)}
-            className={`rounded-full px-3 py-1 text-sm ${
-              unreadOnly
+            className={`rounded-full px-3 py-1 text-sm ${unreadOnly
                 ? "bg-emerald-600 text-neutral-950"
                 : "bg-neutral-800 hover:bg-neutral-700"
-            }`}
+              }`}
           >
             Sadece okunmamışlar
           </button>
@@ -228,9 +229,8 @@ export default function NotificationsPage() {
 
                     const Card = (
                       <div
-                        className={`group relative flex items-center gap-3 rounded-xl border border-white/10 bg-neutral-900/60 p-3 transition ${
-                          isUnread ? "ring-1 ring-emerald-500/20" : ""
-                        }`}
+                        className={`group relative flex items-center gap-3 rounded-xl border border-white/10 bg-neutral-900/60 p-3 transition ${isUnread ? "ring-1 ring-emerald-500/20" : ""
+                          }`}
                       >
                         <div className="grid size-10 place-items-center rounded-full bg-neutral-800">
                           <Icon className="h-5 w-5 text-neutral-200" />
@@ -285,5 +285,13 @@ export default function NotificationsPage() {
 
       <FooterTabs />
     </>
+  );
+}
+
+export default function NotificationsPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-white">Yükleniyor...</div>}>
+      <NotificationsContent />
+    </Suspense>
   );
 }

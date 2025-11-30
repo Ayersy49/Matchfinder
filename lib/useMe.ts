@@ -42,6 +42,8 @@ type Me = {
   height?: number | null;
   weight?: number | null;
   gender?: string | null;
+  isLookingForMatch?: boolean;
+  role?: 'USER' | 'ADMIN';
 };
 
 function normalizeMe(data: any): Me {
@@ -55,6 +57,7 @@ function normalizeMe(data: any): Me {
     surname: data?.surname ?? data?.lastname ?? null,
     birthDate: data?.birthDate ?? null,
     discoverable: typeof data?.discoverable === 'boolean' ? data.discoverable : false,
+    isLookingForMatch: typeof data?.isLookingForMatch === 'boolean' ? data.isLookingForMatch : false,
     dominantFoot: (data?.dominantFoot as Me["dominantFoot"]) ?? "N",
     positions: Array.isArray(data?.positions) ? data.positions : [],
     preferredFormation:
@@ -74,6 +77,7 @@ function normalizeMe(data: any): Me {
     height: typeof data?.height === 'number' ? data.height : null,
     weight: typeof data?.weight === 'number' ? data.weight : null,
     gender: typeof data?.gender === 'string' ? data.gender : null,
+    role: data?.role ?? 'USER',
   };
 }
 

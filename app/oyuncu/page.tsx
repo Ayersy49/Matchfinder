@@ -179,6 +179,9 @@ export default function FriendPublicProfilePage() {
               )}
             </div>
 
+            {/* Saha Kaşifi */}
+            <PitchExplorerPanel userId={id} />
+
             {/* Son 5 Maç W/L/D */}
             <MatchHistoryPanel userId={id} />
           </>
@@ -282,6 +285,126 @@ function MatchHistoryPanel({ userId }: { userId: string }) {
       <div className="mt-2 text-[10px] text-neutral-500">
         <span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1" /> Takım Maçı
         <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 ml-3 mr-1" /> Seri Maçı
+      </div>
+    </div>
+  );
+}
+
+/* ===================== SAHA KAŞİFİ PANELİ ===================== */
+function PitchExplorerPanel({ userId }: { userId: string }) {
+  const [data, setData] = React.useState<{
+    xp: number;
+    level: number;
+    title: string;
+    visitCount: number;
+    uniquePitches: number;
+  } | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/users/${userId}/pitch-explorer`, {
+          headers: authHeader(),
+        });
+        if (r.ok) {
+          const json = await r.json();
+          if (!cancelled) setData(json);
+        }
+      } catch (e) {
+        console.error('Failed to fetch pitch explorer:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  if (loading) {
+    return (
+      <div className="mt-6">
+        <div className="mb-2 text-sm font-semibold">Saha Kaşifi</div>
+        <div className="text-xs text-neutral-400">Yükleniyor...</div>
+      </div>
+    );
+  }
+
+  if (!data || data.xp === 0) {
+    return (
+      <div className="mt-6">
+        <div className="mb-2 text-sm font-semibold">🗺️ Saha Kaşifi</div>
+        <div className="text-xs text-neutral-400">Henüz saha kaşifliği başlamadı.</div>
+      </div>
+    );
+  }
+
+  // Level renkleri
+  const levelColors = [
+    'text-neutral-400',   // 0 - Aday
+    'text-emerald-400',   // 1 - Mahalle
+    'text-blue-400',      // 2 - Şehir
+    'text-purple-400',    // 3 - Bölge
+    'text-amber-400',     // 4 - Ülke
+  ];
+
+  // Level ikonları
+  const levelIcons = ['🌱', '🏘️', '🏙️', '🗺️', '🌍'];
+
+  // XP bar hesaplama (her level 100 XP)
+  const xpForNextLevel = (data.level + 1) * 100;
+  const xpProgress = Math.min(100, (data.xp / xpForNextLevel) * 100);
+
+  return (
+    <div className="mt-6">
+      <div className="mb-3 text-sm font-semibold">🗺️ Saha Kaşifi</div>
+      
+      <div className="rounded-xl border border-white/10 bg-neutral-900 p-4">
+        {/* Başlık ve seviye */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{levelIcons[data.level] || '🗺️'}</span>
+            <div>
+              <div className={`font-semibold ${levelColors[data.level] || 'text-white'}`}>
+                {data.title}
+              </div>
+              <div className="text-xs text-neutral-400">Seviye {data.level}</div>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-lg font-bold text-emerald-400">{data.xp} XP</div>
+            <div className="text-xs text-neutral-400">Toplam</div>
+          </div>
+        </div>
+
+        {/* XP Progress bar */}
+        <div className="mb-3">
+          <div className="flex justify-between text-xs text-neutral-400 mb-1">
+            <span>Sonraki Seviye</span>
+            <span>{data.xp} / {xpForNextLevel}</span>
+          </div>
+          <div className="h-2 w-full rounded bg-neutral-800 overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 transition-all duration-500"
+              style={{ width: `${xpProgress}%` }}
+            />
+          </div>
+        </div>
+
+        {/* İstatistikler */}
+        <div className="grid grid-cols-2 gap-3 text-center">
+          <div className="rounded-lg bg-neutral-800 p-2">
+            <div className="text-lg font-bold text-white">{data.visitCount}</div>
+            <div className="text-xs text-neutral-400">Toplam Ziyaret</div>
+          </div>
+          <div className="rounded-lg bg-neutral-800 p-2">
+            <div className="text-lg font-bold text-white">{data.uniquePitches}</div>
+            <div className="text-xs text-neutral-400">Farklı Saha</div>
+          </div>
+        </div>
       </div>
     </div>
   );

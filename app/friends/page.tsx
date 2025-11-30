@@ -51,6 +51,24 @@ export default function FriendsPage() {
   const [msg, setMsg] = React.useState("");
   const [sending, setSending] = React.useState(false);
 
+  // Search state
+  const [searchQ, setSearchQ] = React.useState("");
+  const [searchResults, setSearchResults] = React.useState<any[]>([]);
+  const [searching, setSearching] = React.useState(false);
+
+  async function handleSearch() {
+    if (searchQ.length < 3) return;
+    setSearching(true);
+    try {
+      const r = await fetch(`${API_URL}/users/search?q=${encodeURIComponent(searchQ)}`, {
+        headers: authHeader()
+      });
+      const data = await r.json();
+      if (data.ok) setSearchResults(data.items);
+    } catch (e) { console.error(e); }
+    finally { setSearching(false); }
+  }
+
   // Listeler
   const [friends, setFriends] = React.useState<FriendshipRow[]>([]);
   const [incoming, setIncoming] = React.useState<FriendRequestRow[]>([]);
@@ -220,6 +238,44 @@ export default function FriendsPage() {
         </Link>
       </div>
 
+      {/* Kullanıcı Arama */}
+      <div className="mb-4 rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
+        <div className="mb-2 text-sm font-medium">Kullanıcı Ara</div>
+        <div className="flex gap-2">
+          <input
+            placeholder="Kullanıcı adı, isim veya telefon..."
+            className="flex-1 rounded-lg bg-neutral-800 px-3 py-2 text-sm outline-none ring-1 ring-white/10"
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          />
+          <button
+            onClick={handleSearch}
+            disabled={searching}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500"
+          >
+            {searching ? '...' : 'Ara'}
+          </button>
+        </div>
+
+        {/* Sonuçlar */}
+        {searchResults.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {searchResults.map(u => (
+              <div key={u.id} className="flex items-center justify-between rounded-lg bg-neutral-800 px-3 py-2 text-sm">
+                <div>
+                  <div className="font-medium">{u.name || u.username || 'İsimsiz'}</div>
+                  <div className="text-xs text-neutral-400">@{u.username}</div>
+                </div>
+                <Link href={`/player/${u.id}`} className="rounded bg-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-600">
+                  Profili Gör
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Yeni istek formu */}
       <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-4">
         <div className="mb-2 text-sm font-medium">Yeni Arkadaş İsteği</div>
@@ -274,6 +330,12 @@ export default function FriendsPage() {
                   >
                     <div>{nameOf(other)}</div>
                     <div className="flex gap-2">
+                      <Link
+                        href={`/messages/${other.id}`}
+                        className="rounded bg-emerald-700 px-2 py-1 text-xs hover:bg-emerald-600"
+                      >
+                        Mesaj
+                      </Link>
                       <Link
                         href={`/player/${other.id}`}
                         className="rounded bg-neutral-700 px-2 py-1 text-xs hover:bg-neutral-600"

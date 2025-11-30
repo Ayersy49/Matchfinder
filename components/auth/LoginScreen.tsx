@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { LogIn, Footprints, ArrowLeft, Eye, EyeOff, Check, X, User, Lock, Phone } from "lucide-react";
 import { setToken } from "@/lib/auth";
+import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -13,6 +14,7 @@ interface LoginScreenProps {
 }
 
 export default function LoginScreen({ onSuccess }: LoginScreenProps) {
+  const { executeRecaptcha } = useGoogleReCaptcha();
   // Arka plan görselleri
   const STADIUMS = [
     "https://images.unsplash.com/photo-1574629810360-7efbbe195018?q=80&w=1600&auto=format&fit=crop",
@@ -87,21 +89,30 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
     setLoading(true);
     setError(null);
     try {
+      let token = "";
+      if (executeRecaptcha) {
+        token = await executeRecaptcha("otp_request");
+      }
+
       const r = await fetch(`${API_URL}/auth/otp/request`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-recaptcha-token": token,
+        },
         body: JSON.stringify({ phone: normalizePhone(phone) }),
       });
       const data = await r.json();
-      
+
       // Dev modda OTP'yi göster
       const shown = data?.devCode ?? data?.code;
       if (shown) alert("DEV OTP: " + shown);
-      
+
       if (!data?.ok) {
         setError("OTP gönderilemedi");
       }
-    } catch {
+    } catch (err) {
+      console.error(err);
       setError("OTP isteği başarısız");
     } finally {
       setLoading(false);
@@ -128,6 +139,17 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       const data = await r.json();
 
       if (!data?.ok || !data?.accessToken) {
+        if (data?.statusCode === 403) {
+          const msg = typeof data.message === 'object' && data.message !== null
+            ? (data.message as any).message
+            : data.message;
+          setError(msg || "Erişim reddedildi.");
+          return;
+        }
+        if (data?.reason === 'banned') {
+          setError(data.message || 'Hesabınız yasaklanmıştır.');
+          return;
+        }
         const msg =
           data?.reason === "OTP_expired"
             ? "Kodun süresi doldu"
@@ -238,8 +260,15 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       const data = await r.json();
 
       if (!data?.ok) {
-        if (data?.reason === "no_password") {
+        if (data?.statusCode === 403) {
+          const msg = typeof data.message === 'object' && data.message !== null
+            ? (data.message as any).message
+            : data.message;
+          setError(msg || "Erişim reddedildi.");
+        } else if (data?.reason === "no_password") {
           setError("Bu hesapta şifre tanımlı değil. OTP ile giriş yapın.");
+        } else if (data?.reason === 'banned') {
+          setError(data.message || 'Hesabınız yasaklanmıştır.');
         } else {
           setError("Kullanıcı adı/telefon veya şifre hatalı");
         }
@@ -266,9 +295,8 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
             key={i}
             src={src}
             alt="stadium"
-            className={`absolute inset-0 size-full object-cover transition-opacity duration-1000 ${
-              i === bgIdx ? "opacity-100" : "opacity-0"
-            }`}
+            className={`absolute inset-0 size-full object-cover transition-opacity duration-1000 ${i === bgIdx ? "opacity-100" : "opacity-0"
+              }`}
           />
         ))}
         <div className="absolute inset-0 bg-black/70" />
